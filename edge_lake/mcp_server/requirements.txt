@@ -1,0 +1,16 @@
+# EdgeLake MCP Server Dependencies
+#
+# Install with: pip install -r requirements.txt
+#
+
+# Core MCP Protocol Support
+mcp>=0.9.0
+
+# YAML Configuration Parsing
+pyyaml>=6.0
+
+# HTTP Client (optional - falls back to urllib if not available)
+requests>=2.31.0
+
+# JSON Schema Validation (optional - for validating tool schemas)
+jsonschema>=4.0.0

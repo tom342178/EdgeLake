@@ -1,0 +1,194 @@
+# EdgeLake MCP Tools Configuration
+# This file defines the MCP tools dynamically based on EdgeLake commands from member_cmd.py
+
+version: "1.0"
+
+tools:
+  # Database Discovery Tools
+  - name: list_databases
+    description: "List all available databases in EdgeLake. Use this to discover what databases are available before querying."
+    edgelake_command:
+      type: "blockchain"
+      method: "get"
+      template: "blockchain get table"
+      parse_response: "extract_databases"
+    input_schema:
+      type: object
+      properties: {}
+      required: []
+    
+  - name: list_tables
+    description: "List all tables in a specific database. Use this to discover what tables are available in a database before querying."
+    edgelake_command:
+      type: "blockchain"
+      method: "get"
+      template: "blockchain get table"
+      parse_response: "extract_tables"
+      filter_by: "database"
+    input_schema:
+      type: object
+      properties:
+        database:
+          type: string
+          description: "Database name to list tables from"
+      required: ["database"]
+  
+  - name: get_schema
+    description: "Get the schema (column definitions) for a specific table. Use this to understand what columns are available before querying."
+    edgelake_command:
+      type: "get"
+      method: "columns"
+      template: 'get columns where dbms="{database}" and table="{table}" and format=json'
+    input_schema:
+      type: object
+      properties:
+        database:
+          type: string
+          description: "Database name"
+        table:
+          type: string
+          description: "Table name"
+      required: ["database", "table"]
+  
+  # Query Execution Tool
+  - name: query
+    description: "Execute SQL query against EdgeLake database tables with advanced filtering, grouping, and ordering options"
+    edgelake_command:
+      type: "sql"
+      method: "query"
+      template: 'sql {database} format = {format} "{sql_query}"'
+      headers:
+        destination: "network"
+    input_schema:
+      type: object
+      properties:
+        database:
+          type: string
+          description: "Database name to query"
+        table:
+          type: string
+          description: "Table name to query"
+        select:
+          type: array
+          items:
+            type: string
+          description: "Columns to select (default: all columns with *)"
+          default: ["*"]
+        where:
+          type: string
+          description: "WHERE clause conditions (e.g., 'is_active = true AND age > 18'). Supports AND/OR operators"
+        group_by:
+          type: array
+          items:
+            type: string
+          description: "Columns to group by (required when using aggregations with non-aggregated columns)"
+        order_by:
+          type: array
+          items:
+            type: object
+            properties:
+              column:
+                type: string
+              direction:
+                type: string
+                enum: ["ASC", "DESC"]
+                default: "ASC"
+            required: ["column"]
+          description: "Order results by columns with optional ASC/DESC direction"
+        limit:
+          type: integer
+          description: "Maximum number of rows to return"
+          minimum: 1
+          default: 100
+        format:
+          type: string
+          enum: ["json", "table"]
+          description: "Output format"
+          default: "json"
+      required: ["database", "table"]
+  
+  # Node Status Tool
+  - name: node_status
+    description: "Get the status and health information of the EdgeLake node"
+    edgelake_command:
+      type: "get"
+      method: "status"
+      template: "get status"
+    input_schema:
+      type: object
+      properties: {}
+      required: []
+  
+  # Server Info Tool
+  - name: server_info
+    description: "Get EdgeLake MCP Server version and configuration information"
+    edgelake_command:
+      type: "internal"
+      method: "server_info"
+    input_schema:
+      type: object
+      properties: {}
+      required: []
+  
+  # Blockchain Query Tools
+  - name: blockchain_get
+    description: "Query policies from the blockchain/metadata layer. Get operator nodes, cluster information, and other network metadata."
+    edgelake_command:
+      type: "blockchain"
+      method: "get"
+      template: "blockchain get {policy_type}"
+      conditional_template:
+        with_where: "blockchain get {policy_type} where {where_clause}"
+        with_bring: "blockchain get {policy_type} bring {bring_clause}"
+        full: "blockchain get {policy_type} where {where_clause} bring {bring_clause}"
+    input_schema:
+      type: object
+      properties:
+        policy_type:
+          type: string
+          description: "Type of policy to query (e.g., 'operator', 'cluster', 'table', '*' for all)"
+          default: "*"
+        where_clause:
+          type: string
+          description: "WHERE conditions (e.g., 'dbms = lsl_demo')"
+        bring_clause:
+          type: string
+          description: "BRING projection (e.g., '[cluster][id]' or '[*][name]')"
+      required: []
+  
+  # Table Information Tool
+  - name: info_table
+    description: "Get detailed information about a table including columns, partitions, and existence checks"
+    edgelake_command:
+      type: "info"
+      method: "table"
+      template: "info table {database} {table} {info_type}"
+    input_schema:
+      type: object
+      properties:
+        database:
+          type: string
+          description: "Database name"
+        table:
+          type: string
+          description: "Table name"
+        info_type:
+          type: string
+          enum: ["columns", "exists", "partitions", "partitions first", "partitions last", "partitions count", "partitions dates"]
+          description: "Type of information to retrieve"
+          default: "columns"
+      required: ["database", "table"]
+
+# Response Parsers
+# These define how to parse EdgeLake responses into MCP-compatible formats
+response_parsers:
+  extract_databases:
+    type: "blockchain_table"
+    extract: "unique_databases"
+    from_column: 0
+    
+  extract_tables:
+    type: "blockchain_table"
+    extract: "tables_for_database"
+    from_columns: [0, 1]  # database, table
+    filter_column: 0
