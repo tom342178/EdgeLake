@@ -8513,6 +8513,206 @@ def start_rest_threads(external_ip, external_port, internal_ip, internal_port, i
     return process_status.SUCCESS
 
 # =======================================================================================================================
+# Start MCP (Model Context Protocol) server as EdgeLake background service
+# Example: run mcp server
+# Example: run mcp server where mode = stdio and tools = auto
+# Example: run mcp server where port = 50051 and tools = "list_databases,query,node_status"
+# =======================================================================================================================
+def _run_mcp_server(status, io_buff_in, cmd_words, trace):
+    global commands
+
+    words_count = len(cmd_words)
+
+    # Check if already running
+    if commands["run mcp server"].get('thread') and commands["run mcp server"]['thread'].is_alive():
+        status.add_error("MCP server already running")
+        return process_status.Process_already_running
+
+    # Default values
+    port = 50051
+    transport = 'sse'  # Default to SSE for embedded mode (recommended)
+    tools_config = 'auto'
+
+    # Parse parameters if provided
+    if words_count > 3 and cmd_words[3] == "where":
+        keywords = {
+            "port": ("int", False, False, True),
+            "transport": ("str", False, False, True),  # Changed from 'mode' to 'transport'
+            "tools": ("str", False, False, True),
+        }
+
+        ret_val, counter, conditions = interpreter.get_dict_from_words(status, cmd_words, 4, 0, keywords, False)
+        if ret_val:
+            return ret_val
+
+        port = interpreter.get_one_value_or_default(conditions, "port", port)
+        transport = interpreter.get_one_value_or_default(conditions, "transport", transport)
+        tools_config = interpreter.get_one_value_or_default(conditions, "tools", tools_config)
+
+    # Import MCP server modules
+    try:
+        from edge_lake.mcp_server.server import EdgeLakeMCPServer
+        from edge_lake.mcp_server.capabilities import detect_node_capabilities, filter_tools_by_capability
+    except ImportError as e:
+        status.add_error(f"Failed to import MCP server: {str(e)}")
+        return process_status.Failed_to_import_lib
+
+    # Detect node capabilities
+    try:
+        capabilities = detect_node_capabilities()
+    except Exception as e:
+        status.add_error(f"Failed to detect node capabilities: {str(e)}")
+        return process_status.ERR_process_status
+
+    # Determine which tools to enable
+    if tools_config == 'auto':
+        enabled_tools = filter_tools_by_capability(capabilities)
+    elif tools_config == 'all':
+        enabled_tools = None  # Enable all tools
+    else:
+        # Parse comma-separated tool list
+        enabled_tools = [t.strip() for t in tools_config.split(',') if t.strip()]
+
+    # Create and start MCP server
+    try:
+        mcp_server = EdgeLakeMCPServer(
+            mode='embedded',
+            port=port,
+            transport=transport,  # Changed from 'mode' to 'transport'
+            enabled_tools=enabled_tools,
+            capabilities=capabilities
+        )
+
+        # Start in background thread
+        import threading
+        mcp_thread = threading.Thread(
+            target=mcp_server.run_embedded,
+            name="EdgeLakeMCPServer",
+            daemon=True
+        )
+        mcp_thread.start()
+
+        # Store server state
+        commands["run mcp server"]['transport'] = transport  # Changed from 'mode'
+        commands["run mcp server"]['port'] = port
+        commands["run mcp server"]['thread'] = mcp_thread
+        commands["run mcp server"]['tools'] = enabled_tools if enabled_tools else 'all'
+        commands["run mcp server"]['capabilities'] = capabilities
+        commands["run mcp server"]['server'] = mcp_server
+
+        # Output startup message
+        tool_count = len(enabled_tools) if enabled_tools else 'all'
+        if trace:
+            if transport == 'sse':
+                utils_print.output(f"\r\n[MCP Server] Started with SSE transport on port {port}, {tool_count} tools enabled", True)
+            else:
+                utils_print.output(f"\r\n[MCP Server] Started with {transport} transport, {tool_count} tools enabled", True)
+
+        return process_status.SUCCESS
+
+    except Exception as e:
+        status.add_error(f"Failed to start MCP server: {str(e)}")
+        return process_status.ERR_process_status
+
+# =======================================================================================================================
+# Get MCP server status
+# Example: get mcp server
+# =======================================================================================================================
+def _get_mcp_server_status(status, io_buff_in, cmd_words, trace):
+    global commands
+
+    mcp_cmd = commands["run mcp server"]
+
+    if not mcp_cmd.get('thread') or not mcp_cmd['thread'].is_alive():
+        utils_print.output("\r\nMCP server is not running", True)
+        return process_status.SUCCESS
+
+    # Build status message
+    transport = mcp_cmd.get('transport', 'unknown')
+    port = mcp_cmd.get('port', 'unknown')
+
+    output_lines = [
+        "\r\nMCP Server Status:",
+        f"  Transport: {transport}",
+        f"  Port: {port}" if transport == 'sse' else f"  Port: {port} (not used for stdio)",
+        f"  Endpoint: http://127.0.0.1:{port}/sse" if transport == 'sse' else "  Endpoint: stdin/stdout",
+        f"  Thread: {mcp_cmd['thread'].name} (alive={mcp_cmd['thread'].is_alive()})",
+        f"  Tools: {mcp_cmd.get('tools', 'unknown')}",
+        "\r\nNode Capabilities:",
+    ]
+
+    capabilities = mcp_cmd.get('capabilities', {})
+    if capabilities:
+        # Node type
+        node_types = []
+        if capabilities.get('is_operator'):
+            node_types.append("Operator")
+        if capabilities.get('is_query'):
+            node_types.append("Query")
+        if capabilities.get('is_publisher'):
+            node_types.append("Publisher")
+        if capabilities.get('is_master'):
+            node_types.append("Master")
+
+        if node_types:
+            output_lines.append(f"  Node Type: {', '.join(node_types)}")
+
+        # Services
+        output_lines.append("  Services:")
+        output_lines.append(f"    REST: {'Active' if capabilities.get('has_rest_server') else 'Inactive'}")
+        output_lines.append(f"    TCP: {'Active' if capabilities.get('has_tcp_server') else 'Inactive'}")
+        output_lines.append(f"    Blockchain: {'Connected' if capabilities.get('has_blockchain') else 'Not Connected'}")
+
+        # Databases
+        databases = capabilities.get('local_databases', [])
+        if databases:
+            output_lines.append(f"  Local Databases: {', '.join(databases)}")
+
+        # Query capabilities
+        output_lines.append("  Query Capabilities:")
+        output_lines.append(f"    Local: {'Yes' if capabilities.get('can_query_local') else 'No'}")
+        output_lines.append(f"    Network: {'Yes' if capabilities.get('can_query_network') else 'No'}")
+
+    utils_print.output("\r\n".join(output_lines), True)
+    return process_status.SUCCESS
+
+# =======================================================================================================================
+# Stop MCP server
+# Example: exit mcp server
+# =======================================================================================================================
+def _exit_mcp_server(status, io_buff_in, cmd_words, trace):
+    global commands
+
+    mcp_cmd = commands["run mcp server"]
+
+    if not mcp_cmd.get('thread') or not mcp_cmd['thread'].is_alive():
+        status.add_error("MCP server is not running")
+        return process_status.ERR_process_status
+
+    # Try to gracefully shutdown the server
+    try:
+        mcp_server = mcp_cmd.get('server')
+        if mcp_server and hasattr(mcp_server, 'close'):
+            mcp_server.close()
+    except Exception as e:
+        # Log but continue with cleanup
+        if trace:
+            utils_print.output(f"\r\n[MCP Server] Warning during shutdown: {str(e)}", True)
+
+    # Clear server state
+    mcp_cmd['thread'] = None
+    mcp_cmd['server'] = None
+    mcp_cmd['transport'] = None  # Changed from 'mode'
+    mcp_cmd['port'] = 0
+    mcp_cmd['tools'] = []
+    mcp_cmd['capabilities'] = {}
+
+    if trace:
+        utils_print.output("\r\n[MCP Server] Stopped", True)
+
+    return process_status.SUCCESS
+
+# =======================================================================================================================
 # A process that flushes the streaming data to files
 # Example: run streamer
 # Example: run streamer where watch_dir = ...
@@ -17664,7 +17864,8 @@ _blockchain_methods = {
                    'text': "Get the policies or information from the policies that satisfy the search criteria.",
                    'link' : "blob/master/blockchain%20commands.md#query-policies",
                    'keywords' : ["blockchain"]
-                    }
+                   'mcp_tooling' : "get_user_tables, get_user_databases, get_table_schema"
+                    },
                },
     "state": {'command': blockchain_state,
             'words_count' : 6,
@@ -20455,6 +20656,56 @@ commands = {
 
                  },
         'trace': 0,
+    },
+
+    'run mcp server': {
+        'command': _run_mcp_server,
+        'words_min': 3,
+        'help': {'usage': 'run mcp server [where port = [port] and transport = [stdio/sse] and tools = [auto/all/tool1,tool2,...]]',
+                 'example': 'run mcp server\n'
+                            'run mcp server where transport = sse and tools = auto\n'
+                            'run mcp server where port = 50051 and transport = sse and tools = "list_databases,query,node_status"',
+                 'text': 'Enable MCP (Model Context Protocol) service for AI assistant integration\n'
+                         '[port] - MCP service port (default: 50051, used with SSE transport)\n'
+                         '[transport] - Transport mode:\n'
+                         '  * sse - Server-Sent Events over HTTP (default, recommended for embedded mode)\n'
+                         '  * stdio - Standard input/output (only for standalone mode)\n'
+                         '[tools] - Tool selection:\n'
+                         '  * auto - Automatically enable tools based on node type and capabilities (recommended)\n'
+                         '  * all - Enable all available tools\n'
+                         '  * tool1,tool2,... - Comma-separated list of specific tools to enable\n'
+                         'The MCP server adapts its capabilities based on the node type (operator/query/master).\n'
+                         'SSE transport allows external MCP clients to connect via HTTP on the specified port.',
+                 'link': 'blob/master/mcp_integration.md',
+                 'keywords': ["configuration", "background processes", "mcp", "ai", "integration"],
+                 },
+        'trace': 0,
+        'transport': None,  # Changed from 'mode'
+        'port': 0,
+        'thread': None,
+        'server': None,
+        'tools': [],
+        'capabilities': {},
+    },
+
+    'get mcp server': {
+        'command': _get_mcp_server_status,
+        'words_count': 3,
+        'help': {'usage': 'get mcp server',
+                 'example': 'get mcp server',
+                 'text': 'Display MCP server status including enabled tools and node capabilities',
+                 'keywords': ["status", "mcp"],
+                 },
+    },
+
+    'exit mcp server': {
+        'command': _exit_mcp_server,
+        'words_count': 3,
+        'help': {'usage': 'exit mcp server',
+                 'example': 'exit mcp server',
+                 'text': 'Stop the MCP server',
+                 'keywords': ["configuration", "mcp"],
+                 },
     },
 
     'run streamer': {

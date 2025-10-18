@@ -51,16 +51,26 @@ class EdgeLakeMCPServer:
     EdgeLake MCP Server supporting multiple deployment modes.
     """
     
-    def __init__(self, mode: str = "standalone", config_dir: str = None):
+    def __init__(self, mode: str = "standalone", config_dir: str = None,
+                 port: int = None, transport: str = "stdio",
+                 enabled_tools: list = None, capabilities: dict = None):
         """
         Initialize MCP server.
-        
+
         Args:
-            mode: Deployment mode ("standalone" or "threaded")
+            mode: Deployment mode ("standalone", "threaded", or "embedded")
             config_dir: Path to configuration directory (optional)
+            port: Port number (for future use)
+            transport: Transport mode ("stdio" or "sse")
+            enabled_tools: List of tool names to enable, or None for all
+            capabilities: Node capability dictionary
         """
         self.mode = mode
-        
+        self.port = port
+        self.transport = transport
+        self.enabled_tools = enabled_tools
+        self.capabilities = capabilities or {}
+
         # Load configuration
         if config_dir:
             self.config = Config(Path(config_dir))
@@ -68,28 +78,40 @@ class EdgeLakeMCPServer:
             # Use default config directory
             config_path = Path(__file__).parent / "config"
             self.config = Config(config_path)
-        
-        # Get default node
-        default_node = self.config.get_default_node()
-        
-        # Initialize components
-        self.client = EdgeLakeClient(
-            host=default_node.host,
-            port=default_node.port,
-            timeout=self.config.get_request_timeout(),
-            max_workers=self.config.get_max_workers()
-        )
-        
+
+        # Initialize client based on mode
+        if mode == "embedded":
+            # Use direct integration client (no HTTP)
+            from .core.direct_client import EdgeLakeDirectClient
+            self.client = EdgeLakeDirectClient(
+                max_workers=self.config.get_max_workers()
+            )
+            logger.info("Using direct EdgeLake integration (embedded mode)")
+        else:
+            # Use HTTP client for standalone/threaded modes
+            default_node = self.config.get_default_node()
+            self.client = EdgeLakeClient(
+                host=default_node.host,
+                port=default_node.port,
+                timeout=self.config.get_request_timeout(),
+                max_workers=self.config.get_max_workers()
+            )
+            logger.info(f"Using HTTP client: {default_node.host}:{default_node.port}")
+
+        # Initialize builders and generators
         self.command_builder = CommandBuilder()
         self.query_builder = QueryBuilder()
-        self.tool_generator = ToolGenerator(self.config.get_all_tools())
+        self.tool_generator = ToolGenerator(
+            self.config.get_all_tools(),
+            enabled_tools=enabled_tools
+        )
         self.tool_executor = ToolExecutor(
             self.client,
             self.command_builder,
             self.query_builder,
             self.config
         )
-        
+
         # Initialize MCP server if available
         if MCP_AVAILABLE:
             self.server = Server("edgelake-mcp-server")
@@ -97,9 +119,11 @@ class EdgeLakeMCPServer:
         else:
             self.server = None
             logger.error("MCP not available - server will not function")
-        
+
+        # Log initialization
+        tool_count = len(enabled_tools) if enabled_tools else 'all'
         logger.info(f"EdgeLake MCP Server initialized (mode={mode}, version={__version__})")
-        logger.info(f"Connected to: {default_node.host}:{default_node.port}")
+        logger.info(f"Transport: {transport}, Tools: {tool_count}")
     
     def _register_handlers(self):
         """Register MCP protocol handlers"""
@@ -227,35 +251,135 @@ class EdgeLakeMCPServer:
         """Run server in standalone mode using stdio transport"""
         if not MCP_AVAILABLE:
             raise RuntimeError("MCP library not available")
-        
+
         logger.info("Starting EdgeLake MCP Server in standalone mode")
-        
+
         from mcp.server.stdio import stdio_server
-        
+
         async with stdio_server() as (read_stream, write_stream):
             await self.server.run(
                 read_stream,
                 write_stream,
                 self.server.create_initialization_options()
             )
-    
+
+    async def run_sse_server(self, host: str = "127.0.0.1", port: int = None):
+        """
+        Run server with SSE (Server-Sent Events) transport.
+
+        This method starts an HTTP server that communicates via SSE, allowing
+        external MCP clients to connect over HTTP instead of stdin/stdout.
+
+        Args:
+            host: Host to bind to (default: 127.0.0.1)
+            port: Port to listen on (from self.port or 50051)
+        """
+        if not MCP_AVAILABLE:
+            raise RuntimeError("MCP library not available")
+
+        # Get port
+        listen_port = port or self.port or 50051
+
+        logger.info(f"Starting EdgeLake MCP Server with SSE transport on {host}:{listen_port}")
+
+        try:
+            from mcp.server.sse import SseServerTransport
+            from starlette.applications import Starlette
+            from starlette.routing import Route, Mount
+            from starlette.responses import Response
+            import uvicorn
+        except ImportError as e:
+            logger.error(f"SSE dependencies not available: {e}")
+            logger.error("Install with: pip install sse-starlette starlette uvicorn")
+            raise
+
+        # Create SSE transport
+        sse = SseServerTransport("/messages/")
+
+        # Define SSE endpoint handler
+        async def handle_sse(request):
+            async with sse.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await self.server.run(
+                    streams[0], streams[1], self.server.create_initialization_options()
+                )
+            return Response()
+
+        # Create Starlette app with routes
+        app = Starlette(
+            routes=[
+                Route("/sse", endpoint=handle_sse, methods=["GET"]),
+                Mount("/messages/", app=sse.handle_post_message),
+            ]
+        )
+
+        # Configure uvicorn
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=listen_port,
+            log_level="info",
+            access_log=False  # Reduce noise, we have our own logging
+        )
+
+        server = uvicorn.Server(config)
+
+        # Store server reference for shutdown
+        self.sse_server = server
+
+        # Run server
+        await server.serve()
+
+    def run_embedded(self):
+        """
+        Run server in embedded mode (within EdgeLake process).
+
+        This method is called from a background thread started by member_cmd.py.
+        Chooses transport based on self.transport parameter:
+        - "stdio": Uses stdio transport (conflicts with EdgeLake CLI, not recommended)
+        - "sse": Uses SSE transport over HTTP (recommended for embedded mode)
+        """
+        if not MCP_AVAILABLE:
+            logger.error("MCP library not available")
+            return
+
+        logger.info(f"Starting EdgeLake MCP Server in embedded mode (transport={self.transport})")
+
+        try:
+            if self.transport == "sse":
+                # Run SSE server - this is the recommended mode for embedded operation
+                asyncio.run(self.run_sse_server())
+            else:
+                # Run stdio server - will conflict with EdgeLake's CLI
+                logger.warning("Using stdio transport in embedded mode may conflict with EdgeLake CLI")
+                logger.warning("Recommend using transport='sse' instead")
+                asyncio.run(self.run_standalone())
+        except Exception as e:
+            logger.error(f"Error in embedded MCP server: {e}", exc_info=True)
+
     def run_threaded(self):
-        """Run server in threaded mode (embedded in EdgeLake)"""
-        logger.info("Starting EdgeLake MCP Server in threaded mode")
-        
-        # For threaded mode, we need a different approach
-        # This would integrate with EdgeLake's event loop
-        # For now, log that this mode needs integration
-        logger.warning("Threaded mode requires integration with EdgeLake's main loop")
-        logger.warning("Use standalone mode for now")
-        
-        # Keep thread alive
-        while True:
-            asyncio.sleep(1)
+        """
+        Run server in threaded mode (legacy/deprecated - use run_embedded instead).
+
+        This method is kept for backward compatibility but now just calls run_embedded.
+        """
+        logger.warning("run_threaded() is deprecated, use run_embedded() instead")
+        self.run_embedded()
     
     def close(self):
         """Shutdown server and cleanup resources"""
         logger.info("Shutting down EdgeLake MCP Server")
+
+        # Shutdown SSE server if running
+        if hasattr(self, 'sse_server') and self.sse_server:
+            logger.info("Shutting down SSE server")
+            try:
+                self.sse_server.should_exit = True
+            except Exception as e:
+                logger.error(f"Error shutting down SSE server: {e}")
+
+        # Close client
         self.client.close()
 
 

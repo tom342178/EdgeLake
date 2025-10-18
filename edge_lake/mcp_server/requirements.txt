@@ -14,3 +14,9 @@ requests>=2.31.0
 
 # JSON Schema Validation (optional - for validating tool schemas)
 jsonschema>=4.0.0
+
+# SSE Transport Dependencies (required for embedded mode)
+sse-starlette>=2.0.0
+starlette>=0.27.0
+uvicorn>=0.27.0
+anyio>=4.0.0
