@@ -14,6 +14,7 @@ ENV PYTHONPATH=/app/EdgeLake/ \
     COMPANY_NAME="New Company" \
     ANYLOG_SERVER_PORT=32548 \
     ANYLOG_REST_PORT=32549 \
+    ANYLOG_MCP_PORT=50051 \
     LEDGER_CONN=127.0.0.1:32049
 
 WORKDIR /app
@@ -23,13 +24,14 @@ COPY setup.cfg /app
 COPY LICENSE /app
 COPY README.md /app
 
-EXPOSE $ANYLOG_SERVER_PORT $ANYLOG_REST_PORT $ANYLOG_BROKER_PORT
+EXPOSE $ANYLOG_SERVER_PORT $ANYLOG_REST_PORT $ANYLOG_BROKER_PORT $ANYLOG_MCP_PORT
 
 # Install dependencies
 RUN apk update && apk upgrade && \
     apk add bash git gcc openssh-client python3 python3-dev py3-pip musl-dev build-base libffi-dev py3-psutil && \
     python3 -m pip install --upgrade pip && \
     python3 -m pip install --upgrade -r /app/EdgeLake/requirements.txt && \
+    python3 -m pip install --upgrade -r /app/EdgeLake/edge_lake/mcp_server/requirements.txt && \
     git clone https://github.com/EdgeLake/deployment-scripts
 
 FROM base AS deployment
