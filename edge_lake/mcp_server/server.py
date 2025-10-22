@@ -19,8 +19,10 @@ log_dir = Path.home() / "Library" / "Logs"
 log_dir.mkdir(parents=True, exist_ok=True)
 log_file = log_dir / "edgelake_mcp.log"
 
+# Allow log level to be configured via environment variable
+log_level = os.getenv('MCP_LOG_LEVEL', 'INFO').upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, log_level, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(log_file),
@@ -263,7 +265,7 @@ class EdgeLakeMCPServer:
                 self.server.create_initialization_options()
             )
 
-    async def run_sse_server(self, host: str = "127.0.0.1", port: int = None):
+    async def run_sse_server(self, host: str = "0.0.0.0", port: int = None):
         """
         Run server with SSE (Server-Sent Events) transport.
 
@@ -271,7 +273,7 @@ class EdgeLakeMCPServer:
         external MCP clients to connect over HTTP instead of stdin/stdout.
 
         Args:
-            host: Host to bind to (default: 127.0.0.1)
+            host: Host to bind to (default: 0.0.0.0)
             port: Port to listen on (from self.port or 50051)
         """
         if not MCP_AVAILABLE:

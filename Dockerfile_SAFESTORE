@@ -29,26 +29,16 @@ EXPOSE $ANYLOG_SERVER_PORT $ANYLOG_REST_PORT $ANYLOG_BROKER_PORT $ANYLOG_MCP_POR
 # Install dependencies
 RUN apk update && apk upgrade && \
     apk add bash git gcc openssh-client python3 python3-dev py3-pip musl-dev build-base libffi-dev py3-psutil && \
-    python3 -m pip install --upgrade pip
-
-# Install MCP server requirements first (needed by mcp_server/__init__.py imports)
-RUN python3 -m pip install --upgrade -r /app/EdgeLake/edge_lake/mcp_server/requirements.txt
-
-# Install main EdgeLake requirements
-RUN python3 -m pip install --upgrade -r /app/EdgeLake/requirements.txt
-
-RUN git clone https://github.com/EdgeLake/deployment-scripts
+    python3 -m pip install --upgrade pip && \
+    python3 -m pip install --upgrade -r /app/EdgeLake/requirements.txt && \
+    python3 -m pip install --upgrade -r /app/EdgeLake/edge_lake/mcp_server/requirements.txt && \
+    git clone https://github.com/EdgeLake/deployment-scripts
 
 FROM base AS deployment
 
 # Make sure to set the EDGELAKE_HOME environment variable for Python explicitly
 ENV EDGELAKE_HOME=/app/EdgeLake
 
-# Copy MCP auto-start files
-COPY edge_lake/mcp_server/autostart.al /app/EdgeLake/edge_lake/mcp_server/
-COPY docker-entrypoint-with-mcp.sh /app/
-RUN chmod +x /app/docker-entrypoint-with-mcp.sh
-
-# Use entrypoint wrapper that includes MCP auto-start
-# Set MCP_ENABLED=true in environment to enable MCP server
-ENTRYPOINT ["/app/docker-entrypoint-with-mcp.sh"]
+# Use exec form of ENTRYPOINT to ensure the environment variables are passed correctly
+# ENTRYPOINT ["/bin/sh"]
+ENTRYPOINT python3 /app/EdgeLake/edge_lake/edgelake.py process /app/deployment-scripts/node-deployment/main.al

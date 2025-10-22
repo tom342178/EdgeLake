@@ -48,26 +48,38 @@ class EdgeLakeDirectClient:
             logger.error(f"Failed to import EdgeLake modules: {e}")
             raise
 
-    async def execute_command(self, command: str, headers: Optional[Dict[str, str]] = None) -> Any:
+    async def execute_command(self, command: str, headers: Optional[Dict[str, str]] = None, timeout: float = 30.0) -> Any:
         """
         Execute an EdgeLake command directly.
 
         Args:
             command: EdgeLake command string
             headers: Optional headers (for compatibility, mostly ignored in direct mode)
+            timeout: Command timeout in seconds (default: 30)
 
         Returns:
             Command result
+
+        Raises:
+            asyncio.TimeoutError: If command execution exceeds timeout
         """
         logger.debug(f"Executing command directly: {command}")
 
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self.executor,
-            self._sync_execute,
-            command,
-            headers
-        )
+
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    self.executor,
+                    self._sync_execute,
+                    command,
+                    headers
+                ),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Command timed out after {timeout}s: {command}")
+            raise TimeoutError(f"Command execution timed out after {timeout} seconds: {command}")
 
     def _sync_execute(self, command: str, headers: Optional[Dict[str, str]] = None) -> Any:
         """
@@ -80,20 +92,24 @@ class EdgeLakeDirectClient:
         Returns:
             Command result
         """
-        # Create status and buffer objects
-        status = self.process_status.ProcessStat()
-
-        # Get buffer size
-        buff_size = int(self.params.get_param("io_buff_size"))
-        io_buff = bytearray(buff_size)
-
-        # Handle special headers (like destination for queries)
-        if headers and 'destination' in headers:
-            # Set destination in status or command context
-            # For network queries, this would typically be handled by the command itself
-            pass
+        logger.debug(f"Starting sync execution of: {command}")
 
         try:
+            # Create status and buffer objects
+            status = self.process_status.ProcessStat()
+
+            # Get buffer size
+            buff_size = int(self.params.get_param("io_buff_size"))
+            io_buff = bytearray(buff_size)
+
+            # Handle special headers (like destination for queries)
+            if headers and 'destination' in headers:
+                # Set destination in status or command context
+                # For network queries, this would typically be handled by the command itself
+                pass
+
+            logger.debug(f"Calling member_cmd.process_cmd for: {command}")
+
             # Execute command via member_cmd
             ret_val = self.member_cmd.process_cmd(
                 status,
@@ -104,9 +120,13 @@ class EdgeLakeDirectClient:
                 io_buffer_in=io_buff
             )
 
+            logger.debug(f"Command completed with return value: {ret_val}")
+
             if ret_val == self.process_status.SUCCESS:
                 # Extract result from status or buffer
-                return self._extract_result(status, io_buff, command)
+                result = self._extract_result(status, io_buff, command)
+                logger.debug(f"Extracted result: {type(result)}")
+                return result
             else:
                 # Command failed
                 error_msg = status.get_saved_error() or f"Command failed with code {ret_val}"
@@ -129,17 +149,7 @@ class EdgeLakeDirectClient:
         Returns:
             Extracted result
         """
-        # Get result from status if available
-        result_str = status.get_result()
-
-        if result_str:
-            # Try to parse as JSON
-            try:
-                return json.loads(result_str)
-            except (json.JSONDecodeError, TypeError):
-                return result_str
-
-        # Try to get from buffer
+        # Try to get from buffer first
         try:
             # Find null terminator
             null_pos = io_buff.find(b'\x00')

@@ -17863,7 +17863,7 @@ _blockchain_methods = {
                               "blockchain get * bring.table.unique [*]",
                    'text': "Get the policies or information from the policies that satisfy the search criteria.",
                    'link' : "blob/master/blockchain%20commands.md#query-policies",
-                   'keywords' : ["blockchain"]
+                   'keywords' : ["blockchain"],
                    'mcp_tooling' : "get_user_tables, get_user_databases, get_table_schema"
                     },
                },
