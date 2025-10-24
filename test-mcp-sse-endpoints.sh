@@ -20,6 +20,7 @@ HOST="${1:-localhost}"
 PORT="${2:-50051}"
 BASE_URL="http://${HOST}:${PORT}"
 SSE_ENDPOINT="${BASE_URL}/sse"
+MESSAGES_ENDPOINT="${BASE_URL}/messages/"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -54,8 +55,8 @@ cat <<'EOF'
 }
 EOF
 echo ""
-echo "Sending..."
-curl -s -X POST "${SSE_ENDPOINT}" \
+echo "Sending to ${MESSAGES_ENDPOINT}..."
+curl -s -X POST "${MESSAGES_ENDPOINT}" \
   -H "Content-Type: application/json" \
   -d '{
   "jsonrpc": "2.0",
@@ -87,7 +88,7 @@ cat <<'EOF'
 EOF
 echo ""
 echo "Sending..."
-curl -s -X POST "${SSE_ENDPOINT}" \
+curl -s -X POST "${MESSAGES_ENDPOINT}" \
   -H "Content-Type: application/json" \
   -d '{
   "jsonrpc": "2.0",
@@ -115,7 +116,7 @@ cat <<'EOF'
 EOF
 echo ""
 echo "Sending..."
-curl -s -X POST "${SSE_ENDPOINT}" \
+curl -s -X POST "${MESSAGES_ENDPOINT}" \
   -H "Content-Type: application/json" \
   -d '{
   "jsonrpc": "2.0",
@@ -146,7 +147,7 @@ cat <<'EOF'
 EOF
 echo ""
 echo "Sending... (will timeout after 30s if EdgeLake hangs)"
-curl -s --max-time 35 -X POST "${SSE_ENDPOINT}" \
+curl -s --max-time 35 -X POST "${MESSAGES_ENDPOINT}" \
   -H "Content-Type: application/json" \
   -d '{
   "jsonrpc": "2.0",
@@ -177,7 +178,7 @@ cat <<'EOF'
 EOF
 echo ""
 echo "Sending... (will timeout after 30s if EdgeLake hangs)"
-curl -s --max-time 35 -X POST "${SSE_ENDPOINT}" \
+curl -s --max-time 35 -X POST "${MESSAGES_ENDPOINT}" \
   -H "Content-Type: application/json" \
   -d '{
   "jsonrpc": "2.0",
@@ -195,7 +196,7 @@ sleep 1
 echo -e "${YELLOW}Test 6: server_info with raw response${NC}"
 echo "-------------------------------------------------------"
 echo "Sending request without jq parsing to see raw response..."
-curl -v -X POST "${SSE_ENDPOINT}" \
+curl -v -X POST "${MESSAGES_ENDPOINT}" \
   -H "Content-Type: application/json" \
   -d '{
   "jsonrpc": "2.0",

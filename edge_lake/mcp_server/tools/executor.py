@@ -21,7 +21,7 @@ class ToolExecutor:
     def __init__(self, client, command_builder, query_builder, config):
         """
         Initialize tool executor.
-        
+
         Args:
             client: EdgeLakeClient instance
             command_builder: CommandBuilder instance
@@ -32,6 +32,15 @@ class ToolExecutor:
         self.command_builder = command_builder
         self.query_builder = query_builder
         self.config = config
+
+        # Initialize query interfaces (generic, configuration-driven)
+        from ..core.blockchain_query import BlockchainQuery
+        from ..core.node_query import NodeQuery
+
+        self.query_interfaces = {
+            'blockchain_query': BlockchainQuery(),
+            'node_query': NodeQuery()
+        }
     
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -51,18 +60,19 @@ class ToolExecutor:
             tool_config = self.config.get_tool_by_name(name)
             if not tool_config:
                 raise ValueError(f"Unknown tool: {name}")
-            
-            # Handle node switching if custom node specified
-            client = self._get_client_for_arguments(arguments)
-            
+
             # Execute based on command type
             edgelake_cmd = tool_config.edgelake_command
             cmd_type = edgelake_cmd.get('type')
-            
+
             if cmd_type == 'internal':
                 result = await self._execute_internal(edgelake_cmd, arguments)
+            elif cmd_type in self.query_interfaces:
+                # Generic query interface execution (blockchain_query, node_query, etc.)
+                result = await self._execute_query_interface(cmd_type, edgelake_cmd, arguments)
             else:
-                result = await self._execute_edgelake_command(tool_config, arguments, client)
+                # Use local client (embedded mode - no node switching)
+                result = await self._execute_edgelake_command(tool_config, arguments, self.client)
             
             # Format response
             return self._format_response(result)
@@ -71,41 +81,6 @@ class ToolExecutor:
             logger.error(f"Error executing tool '{name}': {e}", exc_info=True)
             return self._format_error(str(e))
     
-    def _get_client_for_arguments(self, arguments: Dict[str, Any]):
-        """
-        Get appropriate client based on arguments (supports custom nodes).
-        
-        Args:
-            arguments: Tool arguments
-        
-        Returns:
-            EdgeLakeClient instance
-        """
-        # Check if custom node specified
-        node_host = arguments.get('node_host')
-        node_port = arguments.get('node_port')
-        
-        if node_host or node_port:
-            if not self.config.allows_custom_nodes():
-                logger.warning("Custom nodes not allowed, using default")
-                return self.client
-            
-            # Use custom node
-            host = node_host or self.config.get_default_node().host
-            port = node_port or self.config.get_default_node().port
-            
-            logger.info(f"Using custom node: {host}:{port}")
-            
-            # Import here to avoid circular dependency
-            from ..core.client import EdgeLakeClient
-            return EdgeLakeClient(
-                host=host,
-                port=port,
-                timeout=self.config.get_request_timeout(),
-                max_workers=self.config.get_max_workers()
-            )
-        
-        return self.client
     
     async def _execute_internal(self, edgelake_cmd: Dict[str, Any], 
                                 arguments: Dict[str, Any]) -> str:
@@ -126,29 +101,59 @@ class ToolExecutor:
         else:
             raise ValueError(f"Unknown internal method: {method}")
     
+    async def _execute_query_interface(self, interface_type: str, edgelake_cmd: Dict[str, Any],
+                                       arguments: Dict[str, Any]) -> str:
+        """
+        Execute query using registered query interface (generic, configuration-driven).
+
+        Args:
+            interface_type: Type of query interface (e.g., 'blockchain_query', 'node_query')
+            edgelake_cmd: Command configuration
+            arguments: Tool arguments
+
+        Returns:
+            Result as JSON string
+        """
+        query_type = edgelake_cmd.get('query_type')
+        if not query_type:
+            raise ValueError(f"{interface_type} type must specify query_type")
+
+        logger.info(f"Executing {interface_type}: {query_type}")
+
+        # Build parameters from tool arguments
+        params = {}
+        param_mapping = edgelake_cmd.get('parameters', {})
+        for param_name, param_template in param_mapping.items():
+            # Replace {var} with actual values from arguments
+            if isinstance(param_template, str) and param_template.startswith('{') and param_template.endswith('}'):
+                arg_name = param_template[1:-1]  # Remove { and }
+                if arg_name in arguments:
+                    params[param_name] = arguments[arg_name]
+            else:
+                params[param_name] = param_template
+
+        # Execute query using the appropriate interface
+        query_interface = self.query_interfaces[interface_type]
+        result = query_interface.execute_query(query_type, **params)
+
+        # Return as JSON
+        return json.dumps(result, indent=2)
+
     def _get_server_info(self) -> str:
-        """Get MCP server information"""
+        """Get MCP server information (embedded mode)"""
         from .. import __version__
-        
-        default_node = self.config.get_default_node()
-        
+
         info = {
             "version": __version__,
             "server_name": "edgelake-mcp-server",
+            "mode": "embedded",
             "configuration": {
-                "default_node": {
-                    "name": default_node.name,
-                    "host": default_node.host,
-                    "port": default_node.port
-                },
-                "total_nodes": len(self.config.nodes),
                 "total_tools": len(self.config.tools),
                 "request_timeout": self.config.get_request_timeout(),
-                "max_workers": self.config.get_max_workers(),
-                "allows_custom_nodes": self.config.allows_custom_nodes()
+                "max_workers": self.config.get_max_workers()
             }
         }
-        
+
         return json.dumps(info, indent=2)
     
     async def _execute_edgelake_command(self, tool_config, arguments: Dict[str, Any],
@@ -244,40 +249,75 @@ class ToolExecutor:
                                 arguments: Dict[str, Any]) -> Any:
         """
         Parse blockchain table response.
-        
+
         Args:
             result: Response data
             parser_config: Parser configuration
             arguments: Original arguments
-        
+
         Returns:
             Parsed data
         """
         extract = parser_config.get('extract')
-        
+
         if extract == 'unique_databases':
-            # Extract unique databases
-            if isinstance(result, str):
-                return self.client._parse_databases_from_text(result)
-            elif isinstance(result, list):
-                return self.client._parse_databases_from_list(result)
-            else:
-                return []
-        
+            return self._extract_unique_databases(result)
         elif extract == 'tables_for_database':
-            # Extract tables for specific database
             database = arguments.get('database')
-            if not database:
-                return []
-            
-            if isinstance(result, str):
-                return self.client._parse_tables_from_text(result, database)
-            elif isinstance(result, list):
-                return self.client._parse_tables_from_list(result, database)
-            else:
-                return []
-        
+            return self._extract_tables_for_database(result, database)
+
         return result
+
+    def _extract_unique_databases(self, result: Any) -> List[str]:
+        """
+        Extract unique database names from blockchain table response.
+
+        Args:
+            result: Response data (list of dicts with 'table' key)
+
+        Returns:
+            List of unique database names
+        """
+        databases = set()
+
+        if isinstance(result, list):
+            for item in result:
+                if isinstance(item, dict) and 'table' in item:
+                    table_info = item['table']
+                    if isinstance(table_info, dict):
+                        dbms = table_info.get('dbms')
+                        if dbms:
+                            databases.add(dbms)
+
+        return sorted(list(databases))
+
+    def _extract_tables_for_database(self, result: Any, database: str) -> List[str]:
+        """
+        Extract table names for a specific database from blockchain table response.
+
+        Args:
+            result: Response data (list of dicts with 'table' key)
+            database: Database name to filter by
+
+        Returns:
+            List of table names for the database
+        """
+        if not database:
+            return []
+
+        tables = []
+
+        if isinstance(result, list):
+            for item in result:
+                if isinstance(item, dict) and 'table' in item:
+                    table_info = item['table']
+                    if isinstance(table_info, dict):
+                        dbms = table_info.get('dbms')
+                        table_name = table_info.get('name')
+                        if dbms == database and table_name:
+                            tables.append(table_name)
+
+        return tables
     
     def _format_response(self, result: str) -> List[Dict[str, Any]]:
         """

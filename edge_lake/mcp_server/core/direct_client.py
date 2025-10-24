@@ -98,8 +98,13 @@ class EdgeLakeDirectClient:
             # Create status and buffer objects
             status = self.process_status.ProcessStat()
 
-            # Get buffer size
-            buff_size = int(self.params.get_param("io_buff_size"))
+            # Get buffer size (use default if not initialized yet)
+            buff_size_str = self.params.get_param("io_buff_size")
+            if not buff_size_str or buff_size_str == '':
+                buff_size = 32768  # Default 32KB buffer
+                logger.warning("io_buff_size not initialized, using default: 32768")
+            else:
+                buff_size = int(buff_size_str)
             io_buff = bytearray(buff_size)
 
             # Handle special headers (like destination for queries)
@@ -127,6 +132,10 @@ class EdgeLakeDirectClient:
                 result = self._extract_result(status, io_buff, command)
                 logger.debug(f"Extracted result: {type(result)}")
                 return result
+            elif ret_val == 141:
+                # Error code 141: EdgeLake not ready yet, return empty result
+                logger.warning(f"EdgeLake not ready for command '{command}' (code 141), returning empty result")
+                return ""
             else:
                 # Command failed
                 error_msg = status.get_saved_error() or f"Command failed with code {ret_val}"
@@ -153,17 +162,27 @@ class EdgeLakeDirectClient:
         try:
             # Find null terminator
             null_pos = io_buff.find(b'\x00')
+            logger.debug(f"Buffer null position: {null_pos}, buffer size: {len(io_buff)}")
+
             if null_pos > 0:
                 buffer_str = io_buff[:null_pos].decode('utf-8')
+                logger.debug(f"Buffer string length: {len(buffer_str)}, first 200 chars: {buffer_str[:200]}")
+
                 if buffer_str:
                     try:
-                        return json.loads(buffer_str)
-                    except (json.JSONDecodeError, TypeError):
+                        result = json.loads(buffer_str)
+                        logger.debug(f"Successfully parsed JSON from buffer, type: {type(result)}")
+                        return result
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.debug(f"JSON decode failed: {e}, returning raw string")
                         return buffer_str
+            else:
+                logger.debug(f"No valid data in buffer (null_pos={null_pos})")
         except Exception as e:
             logger.debug(f"Could not extract from buffer: {e}")
 
         # Return empty result for commands that don't produce output
+        logger.debug("Returning empty string - no data extracted")
         return ""
 
     async def get_databases(self) -> List[str]:
@@ -176,23 +195,26 @@ class EdgeLakeDirectClient:
         logger.info("Fetching databases")
 
         try:
-            result = await self.execute_command("blockchain get table")
+            # Import blockchain metadata module
+            from edge_lake.blockchain import metadata
 
-            # Parse databases from response
-            if isinstance(result, str):
-                databases = self._parse_databases_from_text(result)
-            elif isinstance(result, list):
-                databases = self._parse_databases_from_list(result)
-            elif isinstance(result, dict):
-                databases = self._parse_databases_from_dict(result)
-            else:
-                databases = []
+            # Get all unique databases across all companies
+            databases = set()
 
-            logger.info(f"Found {len(databases)} databases")
-            return databases
+            # Access the table_to_cluster_ global dict
+            # Structure: {company: {dbms: {table: ...}}}
+            table_to_cluster = metadata.table_to_cluster_
+
+            for company, dbms_dict in table_to_cluster.items():
+                for dbms in dbms_dict.keys():
+                    databases.add(dbms)
+
+            db_list = sorted(list(databases))
+            logger.info(f"Found {len(db_list)} databases")
+            return db_list
 
         except Exception as e:
-            logger.error(f"Failed to get databases: {e}")
+            logger.error(f"Failed to get databases: {e}", exc_info=True)
             raise
 
     def _parse_databases_from_text(self, text: str) -> List[str]:
@@ -262,23 +284,27 @@ class EdgeLakeDirectClient:
         logger.info(f"Fetching tables for database '{database}'")
 
         try:
-            result = await self.execute_command("blockchain get table")
+            # Import blockchain metadata module
+            from edge_lake.blockchain import metadata
 
-            # Parse tables from response
-            if isinstance(result, str):
-                tables = self._parse_tables_from_text(result, database)
-            elif isinstance(result, list):
-                tables = self._parse_tables_from_list(result, database)
-            elif isinstance(result, dict):
-                tables = self._parse_tables_from_dict(result)
-            else:
-                tables = []
+            # Get all tables for the specified database across all companies
+            tables = set()
 
-            logger.info(f"Found {len(tables)} tables in '{database}'")
-            return tables
+            # Access the table_to_cluster_ global dict
+            # Structure: {company: {dbms: {table: ...}}}
+            table_to_cluster = metadata.table_to_cluster_
+
+            for company, dbms_dict in table_to_cluster.items():
+                if database in dbms_dict:
+                    for table_name in dbms_dict[database].keys():
+                        tables.add(table_name)
+
+            table_list = sorted(list(tables))
+            logger.info(f"Found {len(table_list)} tables in '{database}'")
+            return table_list
 
         except Exception as e:
-            logger.error(f"Failed to get tables for '{database}': {e}")
+            logger.error(f"Failed to get tables for '{database}': {e}", exc_info=True)
             raise
 
     def _parse_tables_from_text(self, text: str, database: str) -> List[str]:

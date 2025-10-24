@@ -40,9 +40,9 @@ async def main():
     print(f"  Endpoint: http://{args.host}:{args.port}/sse")
     print()
 
-    # Create server with SSE transport
+    # Create server with SSE transport in embedded mode (uses direct client)
     server = EdgeLakeMCPServer(
-        mode="standalone",
+        mode="embedded",
         config_dir=args.config_dir,
         port=args.port,
         transport="sse"

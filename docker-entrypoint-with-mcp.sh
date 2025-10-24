@@ -2,8 +2,8 @@
 #
 # EdgeLake Docker Entrypoint with MCP Auto-Start
 #
-# This script wraps the standard EdgeLake startup to automatically
-# start the MCP server if MCP_ENABLED=true
+# This script starts EdgeLake normally. If MCP_ENABLED=true, the MCP server
+# will be started automatically via the autostart.al script included in main.al
 #
 # Usage (in Dockerfile):
 #   COPY docker-entrypoint-with-mcp.sh /app/
@@ -24,28 +24,24 @@ echo "Deployment Scripts: $DEPLOYMENT_SCRIPTS"
 echo "MCP Enabled: $MCP_ENABLED"
 echo ""
 
-# Create a temporary combined init script
-INIT_SCRIPT="/tmp/edgelake-init.al"
+# Export MCP environment variables for autostart.al to use
+export MCP_ENABLED
+export MCP_PORT=${MCP_PORT:-50051}
+export MCP_TRANSPORT=${MCP_TRANSPORT:-sse}
+export MCP_HOST=${MCP_HOST:-0.0.0.0}
+export MCP_TOOLS=${MCP_TOOLS:-auto}
+export MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-INFO}
 
-cat > "$INIT_SCRIPT" <<EOF
-#-----------------------------------------------------------------------------------------------------------------------
-# EdgeLake Auto-Generated Initialization Script
-# Generated at container start with MCP auto-start support
-#-----------------------------------------------------------------------------------------------------------------------
-
-# Run main deployment script
-process $DEPLOYMENT_SCRIPTS/main.al
-
-# Auto-start MCP server if enabled
-process $EDGELAKE_HOME/edge_lake/mcp_server/autostart.al
-
-EOF
-
-echo "Initialization script created at: $INIT_SCRIPT"
-echo ""
-echo "Starting EdgeLake with MCP support..."
-echo "====================================================="
-echo ""
-
-# Start EdgeLake with the combined init script
-exec python3 "$EDGELAKE_HOME/edge_lake/edgelake.py" process "$INIT_SCRIPT"
+# Start EdgeLake main process (foreground mode for CLI access)
+echo "Starting EdgeLake with interactive CLI..."
+if [ -f "$DEPLOYMENT_SCRIPTS/main.al" ]; then
+    echo "Processing: $DEPLOYMENT_SCRIPTS/main.al"
+    echo "MCP server will auto-start if MCP_ENABLED=true"
+    echo ""
+    exec python3 "$EDGELAKE_HOME/edge_lake/edgelake.py" process "$DEPLOYMENT_SCRIPTS/main.al"
+else
+    echo "WARNING: $DEPLOYMENT_SCRIPTS/main.al not found"
+    echo "Starting EdgeLake in interactive mode (MCP auto-start disabled)"
+    echo ""
+    exec python3 "$EDGELAKE_HOME/edge_lake/edgelake.py"
+fi

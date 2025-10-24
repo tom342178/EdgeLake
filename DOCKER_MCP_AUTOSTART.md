@@ -4,7 +4,13 @@ This guide explains how to automatically start the MCP server when an EdgeLake D
 
 ## Overview
 
-The MCP server can now start automatically when EdgeLake initializes. This is controlled by environment variables in the Docker configuration.
+The MCP server now starts automatically when EdgeLake initializes, running as an internal EdgeLake process. This provides:
+- ✅ Automatic MCP server startup via `autostart.al` script
+- ✅ Preserved CLI access via `docker attach`
+- ✅ Embedded mode (direct integration, no HTTP overhead)
+- ✅ Configuration via environment variables
+
+The MCP server is managed like any other EdgeLake service (TCP server, REST server, etc.) and can be controlled via EdgeLake CLI commands.
 
 ## Quick Setup
 
@@ -24,58 +30,91 @@ MCP_TOOLS=auto                # Auto-detect capabilities
 MCP_LOG_LEVEL=INFO            # Log level (use DEBUG for troubleshooting)
 ```
 
-### 2. Include Auto-Start Script in Deployment
+### 2. Deployment-Scripts Integration (Automatic)
 
-**Option A: Via deployment-scripts (Recommended)**
+The MCP auto-start is integrated into the deployment-scripts repository. The Dockerfile automatically clones the deployment-scripts fork that includes MCP autostart integration.
 
-Add this line to your node's `main.al` script in the deployment-scripts repo:
+**How it works:**
+
+The `config_policy.al` file in deployment-scripts automatically includes the MCP autostart script for all node types:
 
 ```al
-# Start MCP server if enabled
-process $EDGELAKE_HOME/edge_lake/mcp_server/autostart.al
+# In deployment-scripts/node-deployment/policies/config_policy.al
+# The script array for each node type includes:
+"process !anylog_path/EdgeLake/edge_lake/mcp_server/autostart.al"
 ```
 
-**Option B: Via Docker ENTRYPOINT modification**
+**Deployment-Scripts Repository:**
 
-Modify the Dockerfile to run autostart after main.al:
+The Dockerfile clones from the public fork with MCP integration:
 
 ```dockerfile
-ENTRYPOINT python3 /app/EdgeLake/edge_lake/edgelake.py \
-    "process /app/deployment-scripts/node-deployment/main.al" \
-    and "process /app/EdgeLake/edge_lake/mcp_server/autostart.al"
+# Clone deployment-scripts from fork (includes MCP autostart integration)
+RUN git clone https://github.com/tviv/deployment-scripts
 ```
 
-**Option C: Via init script injection**
+This ensures:
+- ✅ MCP autostart is included in all node types (generic, master, query, operator, publisher)
+- ✅ Automatic startup when `MCP_ENABLED=true`
+- ✅ No manual script modifications needed
 
-Create a custom init script and mount it:
+**Alternative: Using upstream deployment-scripts**
+
+If you want to use the upstream EdgeLake version (without MCP autostart), modify the Dockerfile:
+
+```dockerfile
+# Use upstream (no MCP autostart)
+RUN git clone https://github.com/EdgeLake/deployment-scripts
+
+# Or use fork with MCP autostart
+# RUN git clone https://github.com/tviv/deployment-scripts
+```
+
+### 3. Build Docker Image
+
+Build from the EdgeLake directory:
 
 ```bash
-# Create local init script
-cat > /tmp/mcp-init.al <<'EOF'
-# Your main node initialization here...
-process /app/deployment-scripts/node-deployment/main.al
+cd /Users/tviviano/Documents/GitHub/EdgeLake
 
-# Start MCP server
-process /app/EdgeLake/edge_lake/mcp_server/autostart.al
-EOF
-
-# Run container with mounted script
-docker run -v /tmp/mcp-init.al:/app/init.al \
-    -e MCP_ENABLED=true \
-    anylogco/anylog-network:latest \
-    process /app/init.al
+# Build image with MCP autostart integration
+docker build -t edgelake-mcp:latest .
 ```
 
-### 3. Build and Deploy
+The build will:
+1. Copy EdgeLake source code
+2. Clone deployment-scripts from https://github.com/tviv/deployment-scripts (includes MCP autostart)
+3. Install MCP server requirements
+4. Configure entrypoint for CLI access
+
+**Note**: The deployment-scripts are cloned during the Docker build, so you don't need to have them locally.
+
+### 4. Deploy with Docker Compose
 
 ```bash
 cd /Users/tviviano/Documents/GitHub/docker-compose
 
-# Build image
+# Deploy query node with MCP enabled
 make up IMAGE=edgelake-mcp TAG=latest EDGELAKE_TYPE=query
 ```
 
-### 4. Verify MCP Server Started
+### 5. Access CLI and Verify MCP Server
+
+**Attach to container CLI:**
+
+```bash
+docker attach edgelake-query
+
+# You should see the EdgeLake CLI prompt:
+# EL edgelake-query >
+
+# Check MCP server status
+get mcp server
+
+# Detach without stopping: Ctrl+P, then Ctrl+Q
+```
+
+### 6. Verify MCP Server Started
 
 ```bash
 # Check logs
@@ -260,15 +299,83 @@ docker run -it --rm \
 4. Add health checks for MCP endpoint
 5. Set up monitoring/alerting for MCP service
 
+## Architecture Details
+
+### How Auto-Start Works
+
+1. **Docker Entrypoint** (`docker-entrypoint-with-mcp.sh`):
+   - Exports MCP environment variables
+   - Starts EdgeLake in foreground mode: `exec python3 edgelake.py process main.al`
+   - EdgeLake becomes PID 1 (enables `docker attach` CLI access)
+
+2. **Deployment Script** (`main.al`):
+   - Processes configuration: `process !local_scripts/policies/config_policy.al`
+
+3. **Configuration Policy** (`config_policy.al`):
+   - Each node type's script array includes: `process !anylog_path/EdgeLake/edge_lake/mcp_server/autostart.al`
+
+4. **Auto-Start Script** (`autostart.al`):
+   - Checks `MCP_ENABLED` environment variable
+   - If true, executes: `run mcp server where transport = sse and port = 50051 ...`
+   - MCP server starts as EdgeLake background thread
+
+5. **MCP Server** (embedded mode):
+   - Uses direct client (calls `member_cmd.process_cmd()` directly)
+   - No HTTP overhead - pure in-process integration
+   - Accessible via SSE endpoint: `http://0.0.0.0:50051/sse`
+
+### Why This Approach?
+
+**Previous attempt** (external Python script):
+- ❌ Complex process management (backgrounding, nohup, etc.)
+- ❌ Lost CLI access (stdout captured by MCP server)
+- ❌ Difficult to monitor/control from EdgeLake
+
+**Current approach** (internal EdgeLake service):
+- ✅ MCP runs as EdgeLake background process
+- ✅ CLI remains accessible via `docker attach`
+- ✅ Can manage via EdgeLake commands (`get mcp server`, `stop mcp server`)
+- ✅ Proper integration with EdgeLake lifecycle
+- ✅ No external process management needed
+
+### Deployment-Scripts Repository
+
+The deployment-scripts are automatically cloned from GitHub during the Docker build:
+
+```dockerfile
+# In Dockerfile
+RUN git clone https://github.com/tviv/deployment-scripts
+```
+
+This public fork includes the MCP autostart integration in `config_policy.al` for all node types. No local copy needed.
+
 ## Files Modified
 
-- `docker-makefiles/query-configs/advance_configs.env` - Added MCP config
+### EdgeLake Repository
+
+- `Dockerfile` - Copy local deployment-scripts, simplified entrypoint
+- `docker-entrypoint-with-mcp.sh` - Simplified to start EdgeLake in foreground
 - `edge_lake/mcp_server/autostart.al` - Auto-start script
 - `edge_lake/mcp_server/server.py` - Added `MCP_LOG_LEVEL` env var support
-- `edge_lake/mcp_server/core/direct_client.py` - Added timeout protection
+- `edge_lake/mcp_server/core/direct_client.py` - Added timeout protection, error code 141 handling
+- `run-mcp-sse-server.py` - Changed to embedded mode
+
+### Deployment-Scripts Repository (Forked)
+
+- `node-deployment/policies/config_policy.al` - Added MCP autostart to all node types:
+  - Line 100: generic node
+  - Line 115: master/query nodes
+  - Line 134: publisher node
+  - Line 155: operator node
+
+### Docker-Compose Repository
+
+- `docker-makefiles/query-configs/advance_configs.env` - Added MCP configuration variables
 
 ## See Also
 
+- `edge_lake/mcp_server/MCP_AUTOSTART.md` - Detailed MCP autostart documentation
 - `MCP_TESTING_GUIDE.md` - Testing with curl/Postman
 - `SSE_USAGE.md` - Using SSE transport
 - `test-mcp-sse-endpoints.sh` - Automated test script
+- `../utilities/edgelake/test-mcp-sse.py` - Python SSE protocol tester

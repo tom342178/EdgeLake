@@ -21,36 +21,35 @@ class CommandBuilder:
         """Initialize command builder"""
         pass
     
-    def build_command(self, tool_config: Dict[str, Any], arguments: Dict[str, Any]) -> tuple[str, Optional[Dict[str, str]]]:
+    def build_command(self, edgelake_command: Dict[str, Any], arguments: Dict[str, Any]) -> tuple[str, Optional[Dict[str, str]]]:
         """
-        Build EdgeLake command from tool configuration and arguments.
-        
+        Build EdgeLake command from edgelake_command configuration and arguments.
+
         Args:
-            tool_config: Tool configuration dict from tools.yaml
+            edgelake_command: EdgeLake command config dict from tools.yaml
             arguments: User-provided arguments for the tool
-        
+
         Returns:
             Tuple of (command_string, headers_dict)
         """
-        edgelake_cmd = tool_config.get('edgelake_command', {})
-        cmd_type = edgelake_cmd.get('type')
-        
+        cmd_type = edgelake_command.get('type')
+
         # Handle special internal commands
         if cmd_type == 'internal':
-            return self._build_internal_command(edgelake_cmd, arguments)
-        
+            return self._build_internal_command(edgelake_command, arguments)
+
         # Build command based on template
-        template = edgelake_cmd.get('template', '')
-        conditional_template = edgelake_cmd.get('conditional_template', {})
+        template = edgelake_command.get('template', '')
+        conditional_template = edgelake_command.get('conditional_template', {})
         
         # Choose appropriate template
         command_template = self._select_template(template, conditional_template, arguments)
         
         # Fill in template placeholders
         command = self._fill_template(command_template, arguments)
-        
+
         # Get headers if specified
-        headers = edgelake_cmd.get('headers')
+        headers = edgelake_command.get('headers')
         
         logger.debug(f"Built command: {command}")
         if headers:

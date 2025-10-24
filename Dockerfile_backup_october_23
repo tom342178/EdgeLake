@@ -19,45 +19,31 @@ ENV PYTHONPATH=/app/EdgeLake/ \
 
 WORKDIR /app
 
-EXPOSE $ANYLOG_SERVER_PORT $ANYLOG_REST_PORT $ANYLOG_BROKER_PORT $ANYLOG_MCP_PORT
-
-# ============================================================================
-# LAYER 1: System dependencies (rarely change - heavily cached)
-# ============================================================================
-RUN apk update && apk upgrade && \
-    apk add bash git gcc openssh-client python3 python3-dev py3-pip musl-dev build-base libffi-dev py3-psutil && \
-    python3 -m pip install --upgrade pip
-
-# ============================================================================
-# LAYER 2: Python dependencies (only rebuilds when requirements change)
-# ============================================================================
-# Copy only requirements files first (not entire codebase)
-COPY requirements.txt /tmp/edgelake-requirements.txt
-COPY edge_lake/mcp_server/requirements.txt /tmp/mcp-requirements.txt
-
-# Install MCP server requirements first (needed by mcp_server/__init__.py imports)
-RUN python3 -m pip install --upgrade -r /tmp/mcp-requirements.txt
-
-# Install main EdgeLake requirements
-RUN python3 -m pip install --upgrade -r /tmp/edgelake-requirements.txt
-
-# ============================================================================
-# LAYER 3: External dependencies (only rebuilds when repo changes)
-# ============================================================================
-# Clone deployment-scripts from your public fork (includes MCP autostart integration)
-ARG CACHEBUST=1
-RUN git clone https://github.com/tom342178/deployment-scripts.git
-
-# Alternative: Use upstream EdgeLake deployment-scripts (without MCP autostart)
-# RUN git clone https://github.com/EdgeLake/deployment-scripts
-
-# ============================================================================
-# LAYER 4: Application code (rebuilds on every code change - fastest layer)
-# ============================================================================
 COPY . EdgeLake
 COPY setup.cfg /app
 COPY LICENSE /app
 COPY README.md /app
+
+EXPOSE $ANYLOG_SERVER_PORT $ANYLOG_REST_PORT $ANYLOG_BROKER_PORT $ANYLOG_MCP_PORT
+
+# Install dependencies
+RUN apk update && apk upgrade && \
+    apk add bash git gcc openssh-client python3 python3-dev py3-pip musl-dev build-base libffi-dev py3-psutil && \
+    python3 -m pip install --upgrade pip
+
+# Install MCP server requirements first (needed by mcp_server/__init__.py imports)
+RUN python3 -m pip install --upgrade -r /app/EdgeLake/edge_lake/mcp_server/requirements.txt
+
+# Install main EdgeLake requirements
+RUN python3 -m pip install --upgrade -r /app/EdgeLake/requirements.txt
+
+# Clone deployment-scripts from your public fork (includes MCP autostart integration)
+ARG CACHEBUST=1
+RUN git clone https://github.com/tom342178/deployment-scripts.git
+
+# Alternative:
+#Use upstream EdgeLake deployment-scripts (without MCP autostart)
+# RUN git clone https://github.com/EdgeLake/deployment-scripts
 
 FROM base AS deployment
 

@@ -24,16 +24,16 @@
 
 # Check if MCP is enabled via environment variable
 on error ignore
-mcp_enabled = python !MCP_ENABLED
+mcp_enabled_str = python !MCP_ENABLED
 on error goto
 
 # Default to false if not set
-if !mcp_enabled == "" then
-    mcp_enabled = false
+if !mcp_enabled_str == "" then
+    mcp_enabled_str = false
 end
 
-# Only proceed if MCP is enabled
-if !mcp_enabled == true or !mcp_enabled == "true" or !mcp_enabled == "True" or !mcp_enabled == "TRUE" then
+# Only proceed if MCP is enabled (check string values since environment variables are strings)
+if !mcp_enabled_str == "true" or !mcp_enabled_str == "True" or !mcp_enabled_str == "TRUE" then
     # Get configuration from environment variables with defaults
     on error ignore
     mcp_port = python !MCP_PORT
@@ -63,11 +63,10 @@ if !mcp_enabled == true or !mcp_enabled == "true" or !mcp_enabled == "True" or !
     echo "Starting EdgeLake MCP Server..."
     echo "  Transport: !mcp_transport"
     echo "  Port: !mcp_port"
-    echo "  Host: !mcp_host"
     echo "  Tools: !mcp_tools"
 
-    # Run the MCP server
-    run mcp server where transport = !mcp_transport and port = !mcp_port and host = !mcp_host and tools = !mcp_tools
+    # Run the MCP server (note: host binding is handled internally, not a command parameter)
+    run mcp server where transport = !mcp_transport and port = !mcp_port and tools = !mcp_tools
 
     # Wait a moment for startup
     sleep 2
