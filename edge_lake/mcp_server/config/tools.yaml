@@ -8,8 +8,10 @@ tools:
   - name: list_databases
     description: "List all available databases in EdgeLake. Use this to discover what databases are available before querying."
     edgelake_command:
-      type: "blockchain_query"
-      query_type: "get_all_databases"
+      type: "get"
+      method: "blockchain_table"
+      template: "blockchain get table"
+      parse_response: "extract_databases"
     input_schema:
       type: object
       properties: {}
@@ -18,10 +20,10 @@ tools:
   - name: list_tables
     description: "List all tables in a specific database. Use this to discover what tables are available in a database before querying."
     edgelake_command:
-      type: "blockchain_query"
-      query_type: "get_tables_for_database"
-      parameters:
-        database: "{database}"
+      type: "get"
+      method: "blockchain_table"
+      template: "blockchain get table"
+      parse_response: "extract_tables"
     input_schema:
       type: object
       properties:
@@ -51,8 +53,11 @@ tools:
   - name: query
     description: "Execute distributed SQL query across EdgeLake network with advanced filtering, grouping, and ordering options"
     edgelake_command:
-      type: "sql_query"
-      query_type: "network"
+      type: "sql"
+      method: "query"
+      build_sql: true
+      headers:
+        destination: "network"
     input_schema:
       type: object
       properties:
@@ -100,13 +105,14 @@ tools:
           description: "Output format"
           default: "json"
       required: ["database", "table"]
-  
+
   # Node Status Tool
   - name: node_status
     description: "Get the status and health information of the EdgeLake node"
     edgelake_command:
-      type: "node_query"
-      query_type: "get_node_status"
+      type: "get"
+      method: "status"
+      template: "get status"
     input_schema:
       type: object
       properties: {}

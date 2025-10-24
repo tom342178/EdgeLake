@@ -32,17 +32,6 @@ class ToolExecutor:
         self.command_builder = command_builder
         self.query_builder = query_builder
         self.config = config
-
-        # Initialize query interfaces (generic, configuration-driven)
-        from ..core.blockchain_query import BlockchainQuery
-        from ..core.node_query import NodeQuery
-        from ..core.sql_query import SqlQuery
-
-        self.query_interfaces = {
-            'blockchain_query': BlockchainQuery(),
-            'node_query': NodeQuery(),
-            'sql_query': SqlQuery(client, query_builder)
-        }
     
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -69,16 +58,13 @@ class ToolExecutor:
 
             if cmd_type == 'internal':
                 result = await self._execute_internal(edgelake_cmd, arguments)
-            elif cmd_type in self.query_interfaces:
-                # Generic query interface execution (blockchain_query, node_query, etc.)
-                result = await self._execute_query_interface(cmd_type, edgelake_cmd, arguments)
             else:
-                # Use local client (embedded mode - no node switching)
+                # All other tools: build command from template and execute
                 result = await self._execute_edgelake_command(tool_config, arguments, self.client)
-            
+
             # Format response
             return self._format_response(result)
-            
+
         except Exception as e:
             logger.error(f"Error executing tool '{name}': {e}", exc_info=True)
             return self._format_error(str(e))
@@ -103,50 +89,6 @@ class ToolExecutor:
         else:
             raise ValueError(f"Unknown internal method: {method}")
     
-    async def _execute_query_interface(self, interface_type: str, edgelake_cmd: Dict[str, Any],
-                                       arguments: Dict[str, Any]) -> str:
-        """
-        Execute query using registered query interface (generic, configuration-driven).
-
-        Args:
-            interface_type: Type of query interface (e.g., 'blockchain_query', 'node_query', 'sql_query')
-            edgelake_cmd: Command configuration
-            arguments: Tool arguments
-
-        Returns:
-            Result as JSON string
-        """
-        query_type = edgelake_cmd.get('query_type')
-        if not query_type:
-            raise ValueError(f"{interface_type} type must specify query_type")
-
-        logger.info(f"Executing {interface_type}: {query_type}")
-
-        # Build parameters from tool arguments
-        params = {}
-        param_mapping = edgelake_cmd.get('parameters', {})
-
-        if param_mapping:
-            # Use explicit parameter mapping if provided
-            for param_name, param_template in param_mapping.items():
-                # Replace {var} with actual values from arguments
-                if isinstance(param_template, str) and param_template.startswith('{') and param_template.endswith('}'):
-                    arg_name = param_template[1:-1]  # Remove { and }
-                    if arg_name in arguments:
-                        params[param_name] = arguments[arg_name]
-                else:
-                    params[param_name] = param_template
-        else:
-            # No parameter mapping - pass all arguments directly
-            params = arguments
-
-        # Execute query using the appropriate interface
-        query_interface = self.query_interfaces[interface_type]
-        result = await query_interface.execute_query(query_type, **params)
-
-        # Return as JSON
-        return json.dumps(result, indent=2)
-
     def _get_server_info(self) -> str:
         """Get MCP server information (embedded mode)"""
         from .. import __version__
@@ -177,17 +119,34 @@ class ToolExecutor:
         Returns:
             Result string
         """
-        # Build command from template
-        command, headers = self.command_builder.build_command(
-            tool_config.edgelake_command,
-            arguments
-        )
+        edgelake_cmd = tool_config.edgelake_command
+
+        # Check if we need to build SQL query
+        if edgelake_cmd.get('build_sql'):
+            # Build SQL query from arguments
+            sql_query = self.command_builder.build_sql_query(arguments)
+
+            # Build full SQL command
+            database = arguments.get('database')
+            output_format = arguments.get('format', 'json')
+            command = f'sql {database} format = {output_format} "{sql_query}"'
+
+            # Get headers
+            headers = edgelake_cmd.get('headers')
+
+            logger.debug(f"Built SQL command: {command}")
+        else:
+            # Build command from template
+            command, headers = self.command_builder.build_command(
+                edgelake_cmd,
+                arguments
+            )
 
         # Execute command
         result = await client.execute_command(command, headers=headers)
 
         # Parse response based on configuration
-        parse_response = tool_config.edgelake_command.get('parse_response')
+        parse_response = edgelake_cmd.get('parse_response')
         if parse_response:
             result = self._parse_response(result, parse_response, arguments)
 
