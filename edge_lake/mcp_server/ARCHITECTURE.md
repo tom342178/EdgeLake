@@ -4,6 +4,70 @@
 
 This document describes the integration of MCP (Model Context Protocol) as a **native EdgeLake service**, similar to REST and TCP services. The MCP service dynamically adapts its capabilities based on node type and configuration.
 
+## Critical Design Constraint
+
+### Configuration-Driven Architecture
+
+**ALL tool behavior MUST be defined in `tools.yaml` and processed through generic handlers.**
+
+**The executor MUST NEVER contain tool-specific or hardcoded logic for individual tools.**
+
+This is a fundamental architectural principle that ensures:
+- **Maintainability**: Adding new tools requires only configuration changes
+- **Consistency**: All tools follow the same execution pattern
+- **Extensibility**: New query types require only registration, not new methods
+- **Clarity**: Tool behavior is defined in one place (tools.yaml)
+- **Testability**: Configuration can be validated independently of code
+
+#### Correct Pattern (Generic Processing)
+
+```python
+# executor.py - Generic dispatcher
+self.query_interfaces = {
+    'blockchain_query': BlockchainQuery(),
+    'node_query': NodeQuery(),
+    'metrics_query': MetricsQuery()  # Just add to dict
+}
+
+async def execute_tool(self, name, arguments):
+    if cmd_type in self.query_interfaces:
+        # Generic routing - NO tool-specific logic
+        result = await self._execute_query_interface(cmd_type, edgelake_cmd, arguments)
+```
+
+```yaml
+# tools.yaml - Configuration defines behavior
+- name: node_status
+  edgelake_command:
+    type: "node_query"
+    query_type: "get_node_status"
+```
+
+#### Incorrect Pattern (NEVER DO THIS)
+
+```python
+# ❌ BAD: Tool-specific methods in executor
+async def _execute_blockchain_query(self, ...):  # Specific implementation
+async def _execute_node_query(self, ...):       # Another specific implementation
+async def _execute_metrics_query(self, ...):    # Would need method for each type
+
+# ❌ BAD: Tool-specific conditionals
+if name == "node_status":
+    return await self._get_node_status()
+elif name == "blockchain_get":
+    return await self._blockchain_get()
+```
+
+#### Adding New Query Types
+
+To add a new query type (e.g., `metrics_query`):
+
+1. **Create query module**: `core/metrics_query.py` with `execute_query(query_type, **kwargs)` method
+2. **Register in executor**: Add to `query_interfaces` dict
+3. **Define in tools.yaml**: Add tool with `type: "metrics_query"`
+
+**NO changes to executor logic required** - it automatically routes to the new interface.
+
 ## Node-Aware MCP Services
 
 ### Capability Matrix
