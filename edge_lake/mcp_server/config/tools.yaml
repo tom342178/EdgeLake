@@ -49,13 +49,10 @@ tools:
   
   # Query Execution Tool
   - name: query
-    description: "Execute SQL query against EdgeLake database tables with advanced filtering, grouping, and ordering options"
+    description: "Execute distributed SQL query across EdgeLake network with advanced filtering, grouping, and ordering options"
     edgelake_command:
-      type: "sql"
-      method: "query"
-      template: 'sql {database} format = {format} "{sql_query}"'
-      headers:
-        destination: "network"
+      type: "sql_query"
+      query_type: "network"
     input_schema:
       type: object
       properties:

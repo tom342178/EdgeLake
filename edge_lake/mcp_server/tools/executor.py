@@ -36,10 +36,12 @@ class ToolExecutor:
         # Initialize query interfaces (generic, configuration-driven)
         from ..core.blockchain_query import BlockchainQuery
         from ..core.node_query import NodeQuery
+        from ..core.sql_query import SqlQuery
 
         self.query_interfaces = {
             'blockchain_query': BlockchainQuery(),
-            'node_query': NodeQuery()
+            'node_query': NodeQuery(),
+            'sql_query': SqlQuery(client, query_builder)
         }
     
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -160,33 +162,29 @@ class ToolExecutor:
                                        client) -> str:
         """
         Execute EdgeLake command.
-        
+
         Args:
             tool_config: Tool configuration
             arguments: Tool arguments
             client: EdgeLake client to use
-        
+
         Returns:
             Result string
         """
-        # Special handling for query tool
-        if tool_config.name == 'query':
-            return await self._execute_query(arguments, client)
-        
         # Build command from template
         command, headers = self.command_builder.build_command(
             tool_config.edgelake_command,
             arguments
         )
-        
+
         # Execute command
         result = await client.execute_command(command, headers=headers)
-        
+
         # Parse response based on configuration
         parse_response = tool_config.edgelake_command.get('parse_response')
         if parse_response:
             result = self._parse_response(result, parse_response, arguments)
-        
+
         # Format result
         if isinstance(result, dict):
             return json.dumps(result, indent=2)
@@ -194,30 +192,6 @@ class ToolExecutor:
             return json.dumps(result, indent=2)
         else:
             return str(result)
-    
-    async def _execute_query(self, arguments: Dict[str, Any], client) -> str:
-        """
-        Execute SQL query tool.
-        
-        Args:
-            arguments: Query arguments
-            client: EdgeLake client
-        
-        Returns:
-            Query results
-        """
-        database = arguments.get('database')
-        output_format = arguments.get('format', 'json')
-        
-        # Build SQL query
-        sql_query = self.query_builder.build_query(arguments)
-        
-        logger.info(f"Executing SQL: {sql_query}")
-        
-        # Execute query
-        result = await client.execute_query(database, sql_query, output_format)
-        
-        return result
     
     def _parse_response(self, result: Any, parser_name: str, 
                        arguments: Dict[str, Any]) -> Any:
