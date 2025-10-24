@@ -104,7 +104,7 @@ class BlockchainQuery:
         logger.debug(f"Found {len(databases)} databases for company '{company}': {databases}")
         return databases
 
-    def execute_query(self, query_type: str, **kwargs) -> Any:
+    async def execute_query(self, query_type: str, **kwargs) -> Any:
         """
         Generic query execution driven by configuration.
 
