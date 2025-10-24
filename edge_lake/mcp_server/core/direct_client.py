@@ -2,8 +2,7 @@
 EdgeLake Direct Client
 
 Direct integration client for embedded MCP server - calls member_cmd.process_cmd()
-directly without HTTP overhead. For network queries, uses REST API to ensure proper
-distributed query handling.
+directly without HTTP overhead.
 
 License: Mozilla Public License 2.0
 """
@@ -12,7 +11,6 @@ import asyncio
 import io
 import json
 import logging
-import aiohttp
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from typing import Any, Dict, List, Optional
@@ -54,14 +52,11 @@ class EdgeLakeDirectClient:
 
     async def execute_command(self, command: str, headers: Optional[Dict[str, str]] = None, timeout: float = 30.0) -> Any:
         """
-        Execute an EdgeLake command.
-
-        For network queries (headers.destination == 'network'), uses REST API to ensure
-        proper distributed query handling. For other commands, calls process_cmd() directly.
+        Execute an EdgeLake command directly.
 
         Args:
             command: EdgeLake command string
-            headers: Optional headers - 'destination: network' triggers REST API
+            headers: Optional headers (for compatibility, mostly ignored in direct mode)
             timeout: Command timeout in seconds (default: 30)
 
         Returns:
@@ -70,12 +65,6 @@ class EdgeLakeDirectClient:
         Raises:
             asyncio.TimeoutError: If command execution exceeds timeout
         """
-        # Check if this is a network query that should use REST API
-        if headers and headers.get('destination') == 'network':
-            logger.debug(f"Executing network query via REST API: {command}")
-            return await self._execute_via_rest(command, timeout)
-
-        # Otherwise execute directly
         logger.debug(f"Executing command directly: {command}")
 
         loop = asyncio.get_event_loop()
@@ -246,50 +235,6 @@ class EdgeLakeDirectClient:
 
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
-            raise
-
-    async def _execute_via_rest(self, command: str, timeout: float) -> Any:
-        """
-        Execute command via local REST API.
-
-        This ensures proper distributed query handling by using EdgeLake's
-        REST infrastructure which has all the job scheduling and network
-        coordination logic built in.
-
-        Args:
-            command: EdgeLake command string
-            timeout: Command timeout in seconds
-
-        Returns:
-            Command result
-        """
-        # Get REST port from params
-        rest_port = self.params.get_param("rest_port") or "32049"
-        url = f"http://127.0.0.1:{rest_port}"
-
-        logger.debug(f"Executing via REST API at {url}: {command}")
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    data=command,
-                    headers={"command": "sql", "User-Agent": "MCP-Server"},
-                    timeout=aiohttp.ClientTimeout(total=timeout)
-                ) as response:
-                    result_text = await response.text()
-                    logger.debug(f"REST API response ({response.status}): {result_text[:200]}")
-
-                    if response.status == 200:
-                        return result_text
-                    else:
-                        raise Exception(f"REST API returned status {response.status}: {result_text}")
-
-        except asyncio.TimeoutError:
-            logger.error(f"REST API request timed out after {timeout}s")
-            raise TimeoutError(f"Network query timed out after {timeout} seconds")
-        except Exception as e:
-            logger.error(f"REST API request failed: {e}")
             raise
 
     def close(self):
