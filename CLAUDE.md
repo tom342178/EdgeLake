@@ -165,3 +165,77 @@ The system uses a permissioned network model:
 - Uses Cython compilation for release builds
 - Minimal external dependencies (see requirements.txt)
 - Custom parameter/dictionary system (`params.py`) for configuration management
+
+## MCP Server Architecture (CRITICAL)
+
+**MCP Server Location**: `edge_lake/mcp_server/`
+
+### Fundamental Design Constraint
+
+**ALL tool behavior MUST be defined in `tools.yaml` and processed through generic handlers.**
+
+**The executor (`tools/executor.py`) MUST NEVER contain tool-specific or hardcoded logic for individual tools.**
+
+This is a non-negotiable architectural principle. When working on the MCP server:
+
+#### ✅ Correct Approach
+```python
+# executor.py - Generic dispatcher
+self.query_interfaces = {
+    'blockchain_query': BlockchainQuery(),
+    'node_query': NodeQuery()
+}
+
+async def execute_tool(self, name, arguments):
+    if cmd_type in self.query_interfaces:
+        # Generic routing - works for ALL query types
+        result = await self._execute_query_interface(cmd_type, edgelake_cmd, arguments)
+```
+
+```yaml
+# tools.yaml - Configuration defines behavior
+- name: node_status
+  edgelake_command:
+    type: "node_query"
+    query_type: "get_node_status"
+```
+
+#### ❌ Incorrect Approach (NEVER DO)
+```python
+# ❌ BAD: Tool-specific methods
+async def _execute_blockchain_query(self, ...):
+async def _execute_node_query(self, ...):
+
+# ❌ BAD: Tool-specific conditionals
+if name == "node_status":
+    return await self._get_node_status()
+```
+
+### Adding New MCP Tools
+
+1. **Create query module** (if new type needed): `core/new_query.py` with `execute_query()` method
+2. **Register interface**: Add to `executor.py` `query_interfaces` dict
+3. **Configure in tools.yaml**: Define tool with appropriate `type` and `query_type`
+
+**NO changes to executor logic required** - it routes automatically.
+
+### MCP Server Modes
+
+- **Embedded Mode** (current): MCP server runs inside EdgeLake process, uses `direct_client.py` to call `member_cmd.process_cmd()` directly. Does NOT use `nodes.yaml`. Single node only.
+- **Standalone Mode** (future): Separate process, HTTP client, multi-node support via `nodes.yaml`.
+
+### Key MCP Files
+
+- `server.py`: SSE-based MCP server entry point
+- `autostart.al`: Autostart script for embedded mode
+- `config/tools.yaml`: **Single source of truth** for ALL tool definitions
+- `tools/executor.py`: Generic tool execution engine (NO tool-specific code)
+- `core/blockchain_query.py`: Direct Python API access to blockchain metadata
+- `core/node_query.py`: Direct Python API access to node information
+- `core/direct_client.py`: Direct `member_cmd.process_cmd()` integration
+
+### Why Direct Python APIs?
+
+Commands like `blockchain get table` and `get status` print to stdout instead of populating `io_buff` when called via `member_cmd.process_cmd()`. Direct Python API access (e.g., `metadata.table_to_cluster_`) bypasses this limitation.
+
+**Full details**: See `edge_lake/mcp_server/ARCHITECTURE.md`
