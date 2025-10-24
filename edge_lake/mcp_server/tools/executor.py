@@ -190,13 +190,21 @@ class ToolExecutor:
         Parse blockchain table response.
 
         Args:
-            result: Response data
+            result: Response data (can be JSON string or already parsed)
             parser_config: Parser configuration
             arguments: Original arguments
 
         Returns:
             Parsed data
         """
+        # If result is a string, try to parse it as JSON
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"Failed to parse result as JSON: {e}")
+                return result
+
         extract = parser_config.get('extract')
 
         if extract == 'unique_databases':

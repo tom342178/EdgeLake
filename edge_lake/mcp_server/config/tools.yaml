@@ -10,7 +10,7 @@ tools:
     edgelake_command:
       type: "get"
       method: "blockchain_table"
-      template: "blockchain get table"
+      template: "blockchain get table bring.json"
       parse_response: "extract_databases"
     input_schema:
       type: object
@@ -22,7 +22,7 @@ tools:
     edgelake_command:
       type: "get"
       method: "blockchain_table"
-      template: "blockchain get table"
+      template: "blockchain get table bring.json"
       parse_response: "extract_tables"
     input_schema:
       type: object
