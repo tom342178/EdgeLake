@@ -8562,7 +8562,7 @@ def _run_mcp_server(status, io_buff_in, cmd_words, trace):
         capabilities = detect_node_capabilities()
     except Exception as e:
         status.add_error(f"Failed to detect node capabilities: {str(e)}")
-        return process_status.ERR_process_status
+        return process_status.ERR_process_failure
 
     # Determine which tools to enable
     if tools_config == 'auto':
@@ -8612,7 +8612,7 @@ def _run_mcp_server(status, io_buff_in, cmd_words, trace):
 
     except Exception as e:
         status.add_error(f"Failed to start MCP server: {str(e)}")
-        return process_status.ERR_process_status
+        return process_status.ERR_process_failure
 
 # =======================================================================================================================
 # Get MCP server status
@@ -8687,7 +8687,7 @@ def _exit_mcp_server(status, io_buff_in, cmd_words, trace):
 
     if not mcp_cmd.get('thread') or not mcp_cmd['thread'].is_alive():
         status.add_error("MCP server is not running")
-        return process_status.ERR_process_status
+        return process_status.ERR_process_failure
 
     # Try to gracefully shutdown the server
     try:

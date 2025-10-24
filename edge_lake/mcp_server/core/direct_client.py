@@ -8,9 +8,11 @@ License: Mozilla Public License 2.0
 """
 
 import asyncio
+import io
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -115,21 +117,25 @@ class EdgeLakeDirectClient:
 
             logger.debug(f"Calling member_cmd.process_cmd for: {command}")
 
-            # Execute command via member_cmd
-            ret_val = self.member_cmd.process_cmd(
-                status,
-                command=command,
-                print_cmd=False,
-                source_ip=None,
-                source_port=None,
-                io_buffer_in=io_buff
-            )
+            # Capture stdout - some commands print results instead of populating io_buff
+            stdout_capture = io.StringIO()
+
+            with redirect_stdout(stdout_capture):
+                # Execute command via member_cmd
+                ret_val = self.member_cmd.process_cmd(
+                    status,
+                    command=command,
+                    print_cmd=False,
+                    source_ip=None,
+                    source_port=None,
+                    io_buffer_in=io_buff
+                )
 
             logger.debug(f"Command completed with return value: {ret_val}")
 
             if ret_val == self.process_status.SUCCESS:
                 # Extract result from status or buffer
-                result = self._extract_result(status, io_buff, command)
+                result = self._extract_result(status, io_buff, command, stdout_capture.getvalue())
                 logger.debug(f"Extracted result: {type(result)}")
                 return result
             elif ret_val == 141:
@@ -146,14 +152,15 @@ class EdgeLakeDirectClient:
             logger.error(f"Error executing command '{command}': {e}", exc_info=True)
             raise
 
-    def _extract_result(self, status, io_buff: bytearray, command: str) -> Any:
+    def _extract_result(self, status, io_buff: bytearray, command: str, stdout_output: str = "") -> Any:
         """
-        Extract result from status object and buffer.
+        Extract result from status object, buffer, or captured stdout.
 
         Args:
             status: ProcessStat object
             io_buff: IO buffer
             command: Original command
+            stdout_output: Captured stdout from command execution
 
         Returns:
             Extracted result
@@ -181,216 +188,23 @@ class EdgeLakeDirectClient:
         except Exception as e:
             logger.debug(f"Could not extract from buffer: {e}")
 
-        # Return empty result for commands that don't produce output
-        logger.debug("Returning empty string - no data extracted")
-        return ""
+        # If buffer is empty, check stdout
+        if stdout_output and stdout_output.strip():
+            logger.debug(f"Buffer empty, checking stdout. Length: {len(stdout_output)}")
+            stdout_trimmed = stdout_output.strip()
 
-    async def get_databases(self) -> List[str]:
-        """
-        Get list of all databases from blockchain.
-
-        Returns:
-            List of database names
-        """
-        logger.info("Fetching databases")
-
-        try:
-            # Import blockchain metadata module
-            from edge_lake.blockchain import metadata
-
-            # Get all unique databases across all companies
-            databases = set()
-
-            # Access the table_to_cluster_ global dict
-            # Structure: {company: {dbms: {table: ...}}}
-            table_to_cluster = metadata.table_to_cluster_
-
-            for company, dbms_dict in table_to_cluster.items():
-                for dbms in dbms_dict.keys():
-                    databases.add(dbms)
-
-            db_list = sorted(list(databases))
-            logger.info(f"Found {len(db_list)} databases")
-            return db_list
-
-        except Exception as e:
-            logger.error(f"Failed to get databases: {e}", exc_info=True)
-            raise
-
-    def _parse_databases_from_text(self, text: str) -> List[str]:
-        """Parse database names from text table response"""
-        databases = set()
-        lines = text.strip().split('\n')
-
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('-') or line.startswith('|'):
-                continue
-
-            # Skip header lines
-            if 'database' in line.lower() and 'table' in line.lower():
-                continue
-
-            # Parse table format with |
-            if '|' in line:
-                parts = [p.strip() for p in line.split('|') if p.strip()]
-                if parts and len(parts) >= 1:
-                    db_name = parts[0]
-                    if db_name and not any(kw in db_name.lower() for kw in ['database', 'table', 'local', 'dbms']):
-                        databases.add(db_name)
-            else:
-                # Simple format
-                parts = line.split()
-                if parts:
-                    databases.add(parts[0])
-
-        return sorted(list(databases))
-
-    def _parse_databases_from_list(self, data: list) -> List[str]:
-        """Parse database names from list of JSON objects"""
-        databases = set()
-        for item in data:
-            if isinstance(item, dict):
-                if "table" in item and isinstance(item["table"], dict):
-                    db_name = item["table"].get("dbms")
-                    if db_name:
-                        databases.add(db_name)
-                else:
-                    db_name = item.get("dbms") or item.get("database") or item.get("db")
-                    if db_name:
-                        databases.add(db_name)
-
-        return sorted(list(databases))
-
-    def _parse_databases_from_dict(self, data: dict) -> List[str]:
-        """Parse database names from dict response"""
-        if "databases" in data:
-            return data["databases"]
-        elif "Database" in data:
-            return data["Database"]
-        else:
-            return []
-
-    async def get_tables(self, database: str) -> List[str]:
-        """
-        Get list of tables in a database.
-
-        Args:
-            database: Database name
-
-        Returns:
-            List of table names
-        """
-        logger.info(f"Fetching tables for database '{database}'")
-
-        try:
-            # Import blockchain metadata module
-            from edge_lake.blockchain import metadata
-
-            # Get all tables for the specified database across all companies
-            tables = set()
-
-            # Access the table_to_cluster_ global dict
-            # Structure: {company: {dbms: {table: ...}}}
-            table_to_cluster = metadata.table_to_cluster_
-
-            for company, dbms_dict in table_to_cluster.items():
-                if database in dbms_dict:
-                    for table_name in dbms_dict[database].keys():
-                        tables.add(table_name)
-
-            table_list = sorted(list(tables))
-            logger.info(f"Found {len(table_list)} tables in '{database}'")
-            return table_list
-
-        except Exception as e:
-            logger.error(f"Failed to get tables for '{database}': {e}", exc_info=True)
-            raise
-
-    def _parse_tables_from_text(self, text: str, database: str) -> List[str]:
-        """Parse table names for a specific database from text response"""
-        tables = []
-        lines = text.strip().split('\n')
-
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('-') or line.startswith('|'):
-                continue
-
-            # Skip header lines
-            if 'database' in line.lower() and 'table' in line.lower():
-                continue
-
-            # Parse table format with |
-            if '|' in line:
-                parts = [p.strip() for p in line.split('|') if p.strip()]
-                if len(parts) >= 2:
-                    db_name = parts[0]
-                    table_name = parts[1]
-                    if db_name == database:
-                        tables.append(table_name)
-            else:
-                # Simple format
-                parts = line.split()
-                if len(parts) >= 2 and parts[0] == database:
-                    tables.append(parts[1])
-
-        return tables
-
-    def _parse_tables_from_list(self, data: list, database: str) -> List[str]:
-        """Parse table names for a specific database from list response"""
-        tables = []
-        for item in data:
-            if isinstance(item, dict):
-                if "table" in item and isinstance(item["table"], dict):
-                    db_name = item["table"].get("dbms")
-                    table_name = item["table"].get("name")
-                    if db_name == database and table_name:
-                        tables.append(table_name)
-                else:
-                    db_name = item.get("dbms") or item.get("database") or item.get("db")
-                    table_name = item.get("table") or item.get("table_name") or item.get("name")
-                    if db_name == database and table_name:
-                        tables.append(table_name)
-
-        return tables
-
-    def _parse_tables_from_dict(self, data: dict) -> List[str]:
-        """Parse table names from dict response"""
-        if "tables" in data:
-            return data["tables"]
-        elif "Table" in data:
-            return data["Table"]
-        else:
-            return []
-
-    async def get_table_schema(self, database: str, table: str) -> str:
-        """
-        Get schema for a specific table.
-
-        Args:
-            database: Database name
-            table: Table name
-
-        Returns:
-            JSON string containing table schema
-        """
-        logger.info(f"Fetching schema for '{database}.{table}'")
-
-        try:
-            command = f'get columns where dbms="{database}" and table="{table}" and format=json'
-            result = await self.execute_command(command)
-
-            if isinstance(result, dict):
-                return json.dumps(result, indent=2)
-            elif isinstance(result, str):
+            try:
+                # Try to parse as JSON
+                result = json.loads(stdout_trimmed)
+                logger.debug(f"Successfully parsed JSON from stdout, type: {type(result)}")
                 return result
-            else:
-                return json.dumps({"schema": result}, indent=2)
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.debug(f"Stdout is not JSON: {e}, returning raw string")
+                return stdout_trimmed
 
-        except Exception as e:
-            logger.error(f"Failed to get schema for '{database}.{table}': {e}")
-            raise
+        # Return empty result for commands that don't produce output
+        logger.debug("Returning empty string - no data in buffer or stdout")
+        return ""
 
     async def execute_query(self, database: str, query: str, output_format: str = "json") -> str:
         """
@@ -421,29 +235,6 @@ class EdgeLakeDirectClient:
 
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
-            raise
-
-    async def get_node_status(self) -> str:
-        """
-        Get EdgeLake node status.
-
-        Returns:
-            Node status information as JSON string
-        """
-        logger.info("Fetching node status")
-
-        try:
-            result = await self.execute_command("get status")
-
-            if isinstance(result, dict):
-                return json.dumps(result, indent=2)
-            elif isinstance(result, str):
-                return result
-            else:
-                return json.dumps({"status": result}, indent=2)
-
-        except Exception as e:
-            logger.error(f"Failed to get node status: {e}")
             raise
 
     def close(self):

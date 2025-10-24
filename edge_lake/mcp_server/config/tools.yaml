@@ -126,54 +126,6 @@ tools:
       properties: {}
       required: []
   
-  # Blockchain Query Tools
-  - name: blockchain_get
-    description: "Query policies from the blockchain/metadata layer. Get operator nodes, cluster information, and other network metadata."
-    edgelake_command:
-      type: "blockchain"
-      method: "get"
-      template: "blockchain get {policy_type}"
-      conditional_template:
-        with_where: "blockchain get {policy_type} where {where_clause}"
-        with_bring: "blockchain get {policy_type} bring {bring_clause}"
-        full: "blockchain get {policy_type} where {where_clause} bring {bring_clause}"
-    input_schema:
-      type: object
-      properties:
-        policy_type:
-          type: string
-          description: "Type of policy to query (e.g., 'operator', 'cluster', 'table', '*' for all)"
-          default: "*"
-        where_clause:
-          type: string
-          description: "WHERE conditions (e.g., 'dbms = lsl_demo')"
-        bring_clause:
-          type: string
-          description: "BRING projection (e.g., '[cluster][id]' or '[*][name]')"
-      required: []
-  
-  # Table Information Tool
-  - name: info_table
-    description: "Get detailed information about a table including columns, partitions, and existence checks"
-    edgelake_command:
-      type: "info"
-      method: "table"
-      template: "info table {database} {table} {info_type}"
-    input_schema:
-      type: object
-      properties:
-        database:
-          type: string
-          description: "Database name"
-        table:
-          type: string
-          description: "Table name"
-        info_type:
-          type: string
-          enum: ["columns", "exists", "partitions", "partitions first", "partitions last", "partitions count", "partitions dates"]
-          description: "Type of information to retrieve"
-          default: "columns"
-      required: ["database", "table"]
 
 # Response Parsers
 # These define how to parse EdgeLake responses into MCP-compatible formats
