@@ -43,7 +43,7 @@ class SqlQuery:
             logger.error(f"Failed to import native_api: {e}")
             self.native_api = None
 
-    def execute_query(self, query_type: str, **params) -> Dict[str, Any]:
+    async def execute_query(self, query_type: str, **params) -> Dict[str, Any]:
         """
         Execute SQL query based on type.
 
@@ -76,14 +76,14 @@ class SqlQuery:
         logger.info(f"Built SQL: {sql_query}")
 
         if query_type == "network":
-            return self._execute_network_query(database, sql_query, output_format, params)
+            return await self._execute_network_query(database, sql_query, output_format, params)
         elif query_type == "local":
-            return self._execute_local_query(database, sql_query, output_format)
+            return await self._execute_local_query(database, sql_query, output_format)
         else:
             raise ValueError(f"Unknown query type: {query_type}")
 
-    def _execute_network_query(self, database: str, sql_query: str,
-                               output_format: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_network_query(self, database: str, sql_query: str,
+                                     output_format: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute distributed query across EdgeLake network.
 
@@ -119,16 +119,15 @@ class SqlQuery:
         # 4. Waiting for distributed replies
 
         # For now, use the existing execute_query method which calls execute_command
-        import asyncio
-        result = asyncio.run(self.client.execute_query(database, sql_query, output_format))
+        result = await self.client.execute_query(database, sql_query, output_format)
 
         try:
             return json.loads(result)
         except json.JSONDecodeError:
             return {"result": result}
 
-    def _execute_local_query(self, database: str, sql_query: str,
-                            output_format: str) -> Dict[str, Any]:
+    async def _execute_local_query(self, database: str, sql_query: str,
+                                   output_format: str) -> Dict[str, Any]:
         """
         Execute query on local node only.
 
@@ -142,13 +141,11 @@ class SqlQuery:
         """
         logger.info(f"Executing local query on database '{database}'")
 
-        import asyncio
-
         # Build command for local execution (no network routing)
         command = f'sql {database} format = {output_format} "{sql_query}"'
 
         # Execute directly via client
-        result = asyncio.run(self.client.execute_command(command))
+        result = await self.client.execute_command(command)
 
         try:
             return json.loads(result)

@@ -142,7 +142,7 @@ class ToolExecutor:
 
         # Execute query using the appropriate interface
         query_interface = self.query_interfaces[interface_type]
-        result = query_interface.execute_query(query_type, **params)
+        result = await query_interface.execute_query(query_type, **params)
 
         # Return as JSON
         return json.dumps(result, indent=2)
