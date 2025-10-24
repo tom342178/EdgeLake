@@ -109,7 +109,7 @@ class ToolExecutor:
         Execute query using registered query interface (generic, configuration-driven).
 
         Args:
-            interface_type: Type of query interface (e.g., 'blockchain_query', 'node_query')
+            interface_type: Type of query interface (e.g., 'blockchain_query', 'node_query', 'sql_query')
             edgelake_cmd: Command configuration
             arguments: Tool arguments
 
@@ -125,14 +125,20 @@ class ToolExecutor:
         # Build parameters from tool arguments
         params = {}
         param_mapping = edgelake_cmd.get('parameters', {})
-        for param_name, param_template in param_mapping.items():
-            # Replace {var} with actual values from arguments
-            if isinstance(param_template, str) and param_template.startswith('{') and param_template.endswith('}'):
-                arg_name = param_template[1:-1]  # Remove { and }
-                if arg_name in arguments:
-                    params[param_name] = arguments[arg_name]
-            else:
-                params[param_name] = param_template
+
+        if param_mapping:
+            # Use explicit parameter mapping if provided
+            for param_name, param_template in param_mapping.items():
+                # Replace {var} with actual values from arguments
+                if isinstance(param_template, str) and param_template.startswith('{') and param_template.endswith('}'):
+                    arg_name = param_template[1:-1]  # Remove { and }
+                    if arg_name in arguments:
+                        params[param_name] = arguments[arg_name]
+                else:
+                    params[param_name] = param_template
+        else:
+            # No parameter mapping - pass all arguments directly
+            params = arguments
 
         # Execute query using the appropriate interface
         query_interface = self.query_interfaces[interface_type]
