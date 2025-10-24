@@ -142,12 +142,7 @@ class ToolExecutor:
                 arguments
             )
 
-        # If headers specify network destination, prefix with 'run client ()'
-        if headers and headers.get('destination') == 'network':
-            command = f'run client () {command}'
-            logger.debug(f"Network query - wrapped with run client: {command}")
-
-        # Execute command
+        # Execute command (network routing handled by client based on headers)
         result = await client.execute_command(command, headers=headers)
 
         # Parse response based on configuration
