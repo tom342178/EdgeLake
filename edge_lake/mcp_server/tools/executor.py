@@ -45,8 +45,8 @@ class ToolExecutor:
         Returns:
             List of TextContent dicts for MCP response
         """
-        logger.info(f"Executing tool '{name}' with arguments: {arguments}")
-        
+        logger.debug(f"Executing tool '{name}' with arguments: {arguments}")
+
         try:
             # Get tool configuration
             tool_config = self.config.get_tool_by_name(name)
@@ -180,7 +180,7 @@ class ToolExecutor:
         parser_type = parser_config.get('type')
 
         if parser_type == 'jsonpath':
-            logger.info(f"Parsing response with JSONPath parser")
+            logger.debug(f"Parsing response with JSONPath parser")
             # Apply JSONPath extraction (direct_client already handled CLI noise)
             return self._parse_with_jsonpath(result, parser_config, arguments)
         else:
@@ -228,7 +228,7 @@ class ToolExecutor:
             # Extract values from matches
             extracted = [match.value for match in matches]
 
-            logger.info(f"JSONPath '{extract_path}' extracted {len(extracted)} items")
+            logger.debug(f"JSONPath '{extract_path}' extracted {len(extracted)} items")
             logger.debug(f"Extracted data: {json.dumps(extracted, indent=2) if len(json.dumps(extracted)) < 1000 else str(extracted)[:1000] + '...'}")
 
             # Apply filtering if configured
@@ -266,8 +266,8 @@ class ToolExecutor:
                 extracted = sorted(extracted)
                 logger.debug("Applied sorting")
 
-            # Log final result at INFO level
-            logger.info(f"JSONPath extraction complete: returning {len(extracted) if isinstance(extracted, list) else 1} items")
+            # Log final result at DEBUG level
+            logger.debug(f"JSONPath extraction complete: returning {len(extracted) if isinstance(extracted, list) else 1} items")
 
             return extracted
 

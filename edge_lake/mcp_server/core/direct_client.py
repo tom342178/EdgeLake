@@ -327,7 +327,7 @@ class EdgeLakeDirectClient:
         Returns:
             Query results as formatted string
         """
-        logger.info(f"Executing query on '{database}': {query}")
+        logger.debug(f"Executing query on '{database}': {query}")
 
         try:
             command = f'sql {database} format = {output_format} "{query}"'

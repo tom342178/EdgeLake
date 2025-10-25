@@ -133,9 +133,9 @@ class EdgeLakeMCPServer:
         @self.server.list_tools()
         async def list_tools():
             """List available MCP tools"""
-            logger.info("Listing tools")
+            logger.debug("Listing tools")
             tools = self.tool_generator.generate_tools()
-            
+
             # Convert to MCP Tool objects
             mcp_tools = []
             for tool_dict in tools:
@@ -144,15 +144,15 @@ class EdgeLakeMCPServer:
                     description=tool_dict['description'],
                     inputSchema=tool_dict['inputSchema']
                 ))
-            
-            logger.info(f"Returning {len(mcp_tools)} tools")
+
+            logger.debug(f"Returning {len(mcp_tools)} tools")
             return mcp_tools
         
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict):
             """Execute a tool"""
-            logger.info(f"Calling tool '{name}' with arguments: {arguments}")
-            
+            logger.debug(f"Calling tool '{name}' with arguments: {arguments}")
+
             try:
                 result = await self.tool_executor.execute_tool(name, arguments)
                 
@@ -176,14 +176,14 @@ class EdgeLakeMCPServer:
         @self.server.list_resources()
         async def list_resources():
             """List available resources (databases and tables)"""
-            logger.info("Listing resources")
-            
+            logger.debug("Listing resources")
+
             try:
                 resources = []
-                
+
                 # Get all databases
                 databases = await self.client.get_databases()
-                logger.info(f"Found {len(databases)} databases")
+                logger.debug(f"Found {len(databases)} databases")
                 
                 # For each database, get its tables
                 for db_name in databases:
@@ -197,7 +197,7 @@ class EdgeLakeMCPServer:
                     
                     # Get tables
                     tables = await self.client.get_tables(db_name)
-                    logger.info(f"Database '{db_name}' has {len(tables)} tables")
+                    logger.debug(f"Database '{db_name}' has {len(tables)} tables")
                     
                     # Add table-level resources
                     for table_name in tables:
@@ -207,8 +207,9 @@ class EdgeLakeMCPServer:
                             "description": f"Table '{table_name}' in database '{db_name}'",
                             "mimeType": "application/json"
                         })
-                
-                logger.info(f"Returning {len(resources)} resources")
+
+
+                logger.debug(f"Returning {len(resources)} resources")
                 return resources
                 
             except Exception as e:
@@ -218,8 +219,8 @@ class EdgeLakeMCPServer:
         @self.server.read_resource()
         async def read_resource(uri: str):
             """Read a resource (table schema)"""
-            logger.info(f"Reading resource: {uri}")
-            
+            logger.debug(f"Reading resource: {uri}")
+
             try:
                 # Parse URI
                 if not uri.startswith("database://"):
