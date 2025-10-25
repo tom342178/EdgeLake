@@ -2,6 +2,45 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## 🎯 ACTIVE TODO LIST (Persistent Across Sessions)
+
+**IMPORTANT:** This section tracks ongoing work. Update it as tasks are completed or new tasks are identified.
+
+**Usage Guidelines:**
+- Check this list at the start of each session to understand ongoing work
+- Mark items as completed with ✅ and add completion date
+- Add new items as they're identified during development
+- Keep high-priority items at the top of each section
+- Include enough context so future sessions can pick up the work
+
+### MCP Server Enhancements
+
+- [ ] **Advanced Response Parser System** (Priority: Medium)
+  - Current: Pattern-based JSON extraction (`{"Query"`, `{"Statistics"`, etc.)
+  - Goal: Generic declarative parser that can extract data from ANY structured output
+  - Inspiration: Pre-JSON parser that could define extraction from complex structures
+  - Design: String-based path notation to specify extraction points (like XPath/JSONPath)
+  - Benefits: No code changes needed for new response formats, fully configuration-driven
+  - Location: `edge_lake/mcp_server/tools/executor.py` + `config/tools.yaml`
+  - Reference: See commit history for current pattern-based parser implementation
+
+### Infrastructure
+
+- [ ] **Deploy-Clean Target** (Status: Completed 2025-10-24)
+  - ✅ Added `deploy-clean` to utilities Makefile
+  - Use: `mel deploy-clean work-from=home` for full cleanup (removes all volumes)
+  - Note: Safe for query nodes (no data stored), use carefully with operator nodes
+
+### Documentation Updates Needed
+
+- [ ] Add MCP server testing guide with example client code
+- [ ] Document SSE endpoint connection process
+- [ ] Create troubleshooting guide for common MCP server issues
+
+---
+
 ## Project Overview
 
 EdgeLake is a decentralized, peer-to-peer network platform that transforms edge nodes into a permissioned network enabling real-time data management, monitoring, and querying without moving data off-device. The system uses a shared metadata layer (blockchain or Master Node) to coordinate distributed data operations across edge nodes.

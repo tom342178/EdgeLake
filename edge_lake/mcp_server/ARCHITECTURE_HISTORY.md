@@ -137,8 +137,76 @@ tools.yaml → CommandBuilder → EdgeLakeDirectClient → member_cmd.process_cm
 - Execution engine: `tools/executor.py`
 - Commit history: `git log --oneline edge_lake/mcp_server/`
 
+## Phase 4: JSONPath-Based Declarative Parsing (2025-10-25)
+
+**Problem:** Even after removing intermediate processors, tool-specific logic still existed in executor.py:
+- `_extract_unique_databases()` method
+- `_extract_tables_for_database()` method
+- These violated the "configuration-driven" principle by hiding tool logic in code
+
+**Solution:** Implement generic JSONPath-based parsing driven entirely by tools.yaml
+
+**Changes:**
+```
+ADDED: jsonpath-ng dependency
+ADDED: Generic _parse_with_jsonpath() method (zero tool-specific logic)
+ADDED: JSONPath expressions in tools.yaml response_parsers
+REMOVED: _parse_blockchain_table()
+REMOVED: _extract_unique_databases()
+REMOVED: _extract_tables_for_database()
+REMOVED: _parse_query_result() (replaced with _extract_json_from_cli_output)
+```
+
+**New Configuration Format:**
+```yaml
+response_parsers:
+  extract_databases:
+    type: "jsonpath"
+    extract_path: "$.(table,tables)[*].table.dbms"
+    unique: true
+    sort: true
+
+  extract_tables:
+    type: "jsonpath"
+    extract_path: "$.(table,tables)[*].table"
+    filter:
+      field: "dbms"
+      source: "argument"
+      argument: "database"
+    map: "name"
+```
+
+**Benefits:**
+- ALL extraction logic now in tools.yaml
+- Adding new data transformations requires ZERO code changes
+- Executor is purely generic - no tool-specific knowledge
+- Can handle complex nested JSON structures declaratively
+
+## Phase 5: Cleanup - Remove Redundant CLI Noise Handling (2025-10-25)
+
+**Problem:** After implementing JSONPath parsing, we discovered that `direct_client.py` already handles all CLI noise extraction from EdgeLake stdout. The `search_patterns` and `fallback` configuration in `tools.yaml` and the corresponding extraction methods in `executor.py` were redundant.
+
+**Changes:**
+```
+REMOVED: search_patterns and fallback from tools.yaml query tool
+REMOVED: _extract_json_from_cli_output() method from executor.py
+REMOVED: _extract_json_from_position() method from executor.py
+SIMPLIFIED: _parse_response() no longer checks for search_patterns
+```
+
+**Clear Separation of Concerns:**
+- `direct_client.py`: Handles **all** CLI noise extraction from EdgeLake stdout
+- `executor.py`: Pure JSONPath-based **data extraction** (no CLI noise handling)
+- `tools.yaml`: Clean configuration with only JSONPath expressions
+
+**Benefits:**
+- No duplicate CLI noise handling logic
+- Clearer responsibility boundaries between layers
+- Simpler configuration - no need for search_patterns in most tools
+- Easier to maintain and understand
+
 ---
 
-**Last Updated:** 2025-10-24
+**Last Updated:** 2025-10-25
 **Current Branch:** feat-mcp-service
-**Correct Architecture Version:** Post-9052858 (configuration-driven, no intermediate processors)
+**Correct Architecture Version:** Post-cleanup (fully declarative, zero duplication, clear separation of concerns)

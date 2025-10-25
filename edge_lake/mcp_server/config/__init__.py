@@ -59,7 +59,6 @@ class Config:
         self.config_dir = Path(config_dir)
         self.nodes: List[NodeConfig] = []
         self.tools: List[ToolConfig] = []
-        self.response_parsers: Dict[str, Any] = {}
         self.client_config: Dict[str, Any] = {}
         
         # Load configurations
@@ -121,10 +120,7 @@ class Config:
             # Load tools
             for tool_data in config.get('tools', []):
                 self.tools.append(ToolConfig(tool_data))
-            
-            # Load response parsers
-            self.response_parsers = config.get('response_parsers', {})
-            
+
             logger.info(f"Loaded {len(self.tools)} tool configurations")
             
         except Exception as e:
