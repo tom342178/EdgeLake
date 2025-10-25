@@ -59,13 +59,18 @@ async def execute_tool(self, name, arguments):
     headers:
       destination: "network"
 
-# Example 3: Command with response parsing
+# Example 3: Command with JSONPath response parsing
 - name: list_databases
   edgelake_command:
     type: "get"
     method: "blockchain_table"
     template: "blockchain get table bring.json"
-    parse_response: "extract_databases"
+    response_parser:
+      type: "jsonpath"
+      description: "Extract unique database names"
+      extract_path: "$[*].table.dbms"
+      unique: true
+      sort: true
 ```
 
 **Flow:**

@@ -120,6 +120,9 @@ class EdgeLakeDirectClient:
             # Capture stdout - some commands print results instead of populating io_buff
             stdout_capture = io.StringIO()
 
+            # Check if this is an async command (run client)
+            is_async_command = 'run client' in command.lower()
+
             with redirect_stdout(stdout_capture):
                 # Execute command via member_cmd
                 ret_val = self.member_cmd.process_cmd(
@@ -130,6 +133,30 @@ class EdgeLakeDirectClient:
                     source_port=None,
                     io_buffer_in=io_buff
                 )
+
+                # For async commands (run client), poll for results with exponential backoff
+                if is_async_command and ret_val == self.process_status.SUCCESS:
+                    import time
+                    logger.debug("Async command detected, polling for results...")
+
+                    max_wait = 5.0  # Maximum 5 seconds
+                    poll_interval = 0.05  # Start with 50ms
+                    elapsed = 0
+
+                    while elapsed < max_wait:
+                        # Check if JSON results have appeared
+                        current_output = stdout_capture.getvalue()
+                        if '{"Query"' in current_output or '{"Statistics"' in current_output:
+                            logger.debug(f"Results appeared after {elapsed:.3f}s")
+                            break
+
+                        time.sleep(poll_interval)
+                        elapsed += poll_interval
+                        # Exponential backoff, max 500ms per poll
+                        poll_interval = min(poll_interval * 1.5, 0.5)
+
+                    if elapsed >= max_wait:
+                        logger.warning(f"Async command timed out after {max_wait}s")
 
             logger.debug(f"Command completed with return value: {ret_val}")
 
@@ -193,13 +220,95 @@ class EdgeLakeDirectClient:
             logger.debug(f"Buffer empty, checking stdout. Length: {len(stdout_output)}")
             stdout_trimmed = stdout_output.strip()
 
+            # Try to extract JSON from stdout (may contain CLI prompts and other noise)
             try:
-                # Try to parse as JSON
+                # First, try to parse the whole output as JSON
                 result = json.loads(stdout_trimmed)
                 logger.debug(f"Successfully parsed JSON from stdout, type: {type(result)}")
                 return result
             except (json.JSONDecodeError, TypeError) as e:
-                logger.debug(f"Stdout is not JSON: {e}, returning raw string")
+                logger.debug(f"Stdout is not valid JSON: {e}")
+
+                # Try to find JSON object in the output
+                # Look for query result patterns like {"Query":[... or {"Statistics":[...
+                # Prefer finding objects over arrays to avoid matching noise like [7]
+
+                # Strategy: Look for '{"Query"' or '{"Statistics"' patterns first
+                result_patterns = [
+                    '{"Query"',
+                    '{"Statistics"',
+                    '{"result"',
+                    '{"data"',
+                ]
+
+                json_start = -1
+                for pattern in result_patterns:
+                    pos = stdout_trimmed.find(pattern)
+                    if pos >= 0:
+                        json_start = pos
+                        logger.debug(f"Found query result pattern '{pattern}' at position {pos}")
+                        break
+
+                # If no pattern found, fall back to finding first [ or {
+                # Prefer arrays for blockchain commands, objects for others
+                if json_start < 0:
+                    logger.debug("No query result pattern found, searching for first JSON structure")
+                    # Check if this is a blockchain command (arrays are common)
+                    is_blockchain_cmd = 'blockchain' in command.lower()
+
+                    if is_blockchain_cmd:
+                        # For blockchain commands, try array first
+                        for i, char in enumerate(stdout_trimmed):
+                            if char == '[':
+                                json_start = i
+                                break
+                        # If no [, try {
+                        if json_start < 0:
+                            for i, char in enumerate(stdout_trimmed):
+                                if char == '{':
+                                    json_start = i
+                                    break
+                    else:
+                        # For other commands, prefer objects over arrays
+                        for i, char in enumerate(stdout_trimmed):
+                            if char == '{':
+                                json_start = i
+                                break
+                        # If still no {, try [
+                        if json_start < 0:
+                            for i, char in enumerate(stdout_trimmed):
+                                if char == '[':
+                                    json_start = i
+                                    break
+
+                if json_start >= 0:
+                    # Find matching closing bracket
+                    bracket_count = 0
+                    is_object = stdout_trimmed[json_start] == '{'
+                    open_bracket = '{' if is_object else '['
+                    close_bracket = '}' if is_object else ']'
+                    json_end = -1
+
+                    for i in range(json_start, len(stdout_trimmed)):
+                        if stdout_trimmed[i] == open_bracket:
+                            bracket_count += 1
+                        elif stdout_trimmed[i] == close_bracket:
+                            bracket_count -= 1
+                            if bracket_count == 0:
+                                json_end = i + 1
+                                break
+
+                    if json_end > json_start:
+                        json_str = stdout_trimmed[json_start:json_end]
+                        try:
+                            result = json.loads(json_str)
+                            logger.debug(f"Extracted JSON from stdout (chars {json_start}:{json_end}), type: {type(result)}")
+                            return result
+                        except (json.JSONDecodeError, TypeError) as e2:
+                            logger.debug(f"Failed to parse extracted JSON: {e2}")
+
+                # If we can't extract JSON, return the raw stdout (CLI prompts and all)
+                logger.debug("Could not extract valid JSON from stdout, returning raw string")
                 return stdout_trimmed
 
         # Return empty result for commands that don't produce output

@@ -11,7 +11,13 @@ tools:
       type: "get"
       method: "blockchain_table"
       template: "blockchain get table bring.json"
-      parse_response: "extract_databases"
+      # Response extraction using JSONPath
+      response_parser:
+        type: "jsonpath"
+        description: "Extract unique database names from blockchain table response"
+        extract_path: "$[*].table.dbms"
+        unique: true
+        sort: true
     input_schema:
       type: object
       properties: {}
@@ -23,7 +29,17 @@ tools:
       type: "get"
       method: "blockchain_table"
       template: "blockchain get table bring.json"
-      parse_response: "extract_tables"
+      # Response extraction using JSONPath
+      response_parser:
+        type: "jsonpath"
+        description: "Extract table names for a specific database from blockchain table response"
+        extract_path: "$[*].table"
+        # Filter by dbms field matching 'database' argument, then extract 'name' field
+        filter:
+          field: "dbms"
+          source: "argument"
+          argument: "database"
+        map: "name"
     input_schema:
       type: object
       properties:
@@ -58,6 +74,11 @@ tools:
       build_sql: true
       headers:
         destination: "network"
+      # Response extraction using JSONPath
+      response_parser:
+        type: "jsonpath"
+        description: "Extract query results array from EdgeLake response"
+        extract_path: "$.Query[*]"
     input_schema:
       type: object
       properties:
@@ -128,18 +149,3 @@ tools:
       type: object
       properties: {}
       required: []
-  
-
-# Response Parsers
-# These define how to parse EdgeLake responses into MCP-compatible formats
-response_parsers:
-  extract_databases:
-    type: "blockchain_table"
-    extract: "unique_databases"
-    from_column: 0
-    
-  extract_tables:
-    type: "blockchain_table"
-    extract: "tables_for_database"
-    from_columns: [0, 1]  # database, table
-    filter_column: 0

@@ -9,6 +9,7 @@ License: Mozilla Public License 2.0
 import json
 import logging
 from typing import Any, Dict, List, Optional
+from jsonpath_ng import parse as jsonpath_parse
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,7 @@ class ToolExecutor:
                 arguments
             )
 
-        # If headers specify network destination, prefix with 'run client ()'
+        # For network queries, wrap with 'run client ()' to distribute across network
         if headers and headers.get('destination') == 'network':
             command = f'run client () {command}'
             logger.debug(f"Network query - wrapped with run client: {command}")
@@ -150,10 +151,10 @@ class ToolExecutor:
         # Execute command
         result = await client.execute_command(command, headers=headers)
 
-        # Parse response based on configuration
-        parse_response = edgelake_cmd.get('parse_response')
-        if parse_response:
-            result = self._parse_response(result, parse_response, arguments)
+        # Parse response based on inline response_parser configuration
+        response_parser = edgelake_cmd.get('response_parser')
+        if response_parser:
+            result = self._parse_response(result, response_parser, arguments)
 
         # Format result
         if isinstance(result, dict):
@@ -163,46 +164,46 @@ class ToolExecutor:
         else:
             return str(result)
     
-    def _parse_response(self, result: Any, parser_name: str, 
+    def _parse_response(self, result: Any, parser_config: Dict[str, Any],
                        arguments: Dict[str, Any]) -> Any:
         """
         Parse EdgeLake response using configured parser.
-        
+
         Args:
             result: Raw EdgeLake response
-            parser_name: Name of parser to use
+            parser_config: Parser configuration (inline from tool definition)
             arguments: Original arguments (for filtering)
-        
+
         Returns:
             Parsed result
         """
-        parser_config = self.config.response_parsers.get(parser_name)
-        if not parser_config:
-            logger.warning(f"Parser '{parser_name}' not found")
-            return result
-        
         parser_type = parser_config.get('type')
-        
-        if parser_type == 'blockchain_table':
-            return self._parse_blockchain_table(result, parser_config, arguments)
+
+        if parser_type == 'jsonpath':
+            logger.info(f"Parsing response with JSONPath parser")
+            # Apply JSONPath extraction (direct_client already handled CLI noise)
+            return self._parse_with_jsonpath(result, parser_config, arguments)
         else:
             logger.warning(f"Unknown parser type: {parser_type}")
             return result
     
-    def _parse_blockchain_table(self, result: Any, parser_config: Dict[str, Any],
-                                arguments: Dict[str, Any]) -> Any:
+    def _parse_with_jsonpath(self, result: Any, parser_config: Dict[str, Any],
+                            arguments: Dict[str, Any]) -> Any:
         """
-        Parse blockchain table response.
+        Generic JSONPath-based parser.
+
+        All extraction logic is driven by configuration in tools.yaml.
+        This method contains NO tool-specific logic.
 
         Args:
-            result: Response data (can be JSON string or already parsed)
-            parser_config: Parser configuration
-            arguments: Original arguments
+            result: Data to parse (must be dict/list, not string)
+            parser_config: Parser configuration from tools.yaml
+            arguments: Original tool arguments (for filtering)
 
         Returns:
-            Parsed data
+            Extracted data
         """
-        # If result is a string, try to parse it as JSON
+        # Ensure result is parsed JSON
         if isinstance(result, str):
             try:
                 result = json.loads(result)
@@ -210,67 +211,70 @@ class ToolExecutor:
                 logger.warning(f"Failed to parse result as JSON: {e}")
                 return result
 
-        extract = parser_config.get('extract')
+        # Get JSONPath expression from config
+        extract_path = parser_config.get('extract_path')
+        if not extract_path:
+            logger.warning("JSONPath parser missing 'extract_path'")
+            return result
 
-        if extract == 'unique_databases':
-            return self._extract_unique_databases(result)
-        elif extract == 'tables_for_database':
-            database = arguments.get('database')
-            return self._extract_tables_for_database(result, database)
+        try:
+            # Log the input data structure for debugging
+            logger.debug(f"Input to JSONPath: {json.dumps(result, indent=2) if len(json.dumps(result)) < 2000 else str(result)[:2000] + '...'}")
 
-        return result
+            # Parse and apply JSONPath expression
+            jsonpath_expr = jsonpath_parse(extract_path)
+            matches = jsonpath_expr.find(result)
 
-    def _extract_unique_databases(self, result: Any) -> List[str]:
-        """
-        Extract unique database names from blockchain table response.
+            # Extract values from matches
+            extracted = [match.value for match in matches]
 
-        Args:
-            result: Response data (list of dicts with 'table' key)
+            logger.info(f"JSONPath '{extract_path}' extracted {len(extracted)} items")
+            logger.debug(f"Extracted data: {json.dumps(extracted, indent=2) if len(json.dumps(extracted)) < 1000 else str(extracted)[:1000] + '...'}")
 
-        Returns:
-            List of unique database names
-        """
-        databases = set()
+            # Apply filtering if configured
+            if 'filter' in parser_config:
+                filter_config = parser_config['filter']
+                field = filter_config.get('field')
+                source = filter_config.get('source')
+                argument_name = filter_config.get('argument')
 
-        if isinstance(result, list):
-            for item in result:
-                if isinstance(item, dict) and 'table' in item:
-                    table_info = item['table']
-                    if isinstance(table_info, dict):
-                        dbms = table_info.get('dbms')
-                        if dbms:
-                            databases.add(dbms)
+                if source == 'argument' and argument_name:
+                    filter_value = arguments.get(argument_name)
+                    if filter_value:
+                        extracted = [
+                            item for item in extracted
+                            if isinstance(item, dict) and item.get(field) == filter_value
+                        ]
+                        logger.debug(f"Filtered to {len(extracted)} items where {field}={filter_value}")
 
-        return sorted(list(databases))
+            # Apply field mapping if configured
+            if 'map' in parser_config:
+                map_field = parser_config['map']
+                extracted = [
+                    item.get(map_field) if isinstance(item, dict) else item
+                    for item in extracted
+                ]
+                logger.debug(f"Mapped to field '{map_field}'")
 
-    def _extract_tables_for_database(self, result: Any, database: str) -> List[str]:
-        """
-        Extract table names for a specific database from blockchain table response.
+            # Apply uniqueness if configured
+            if parser_config.get('unique'):
+                extracted = list(set(extracted))
+                logger.debug(f"Applied unique filter, {len(extracted)} unique items")
 
-        Args:
-            result: Response data (list of dicts with 'table' key)
-            database: Database name to filter by
+            # Apply sorting if configured
+            if parser_config.get('sort'):
+                extracted = sorted(extracted)
+                logger.debug("Applied sorting")
 
-        Returns:
-            List of table names for the database
-        """
-        if not database:
-            return []
+            # Log final result at INFO level
+            logger.info(f"JSONPath extraction complete: returning {len(extracted) if isinstance(extracted, list) else 1} items")
 
-        tables = []
+            return extracted
 
-        if isinstance(result, list):
-            for item in result:
-                if isinstance(item, dict) and 'table' in item:
-                    table_info = item['table']
-                    if isinstance(table_info, dict):
-                        dbms = table_info.get('dbms')
-                        table_name = table_info.get('name')
-                        if dbms == database and table_name:
-                            tables.append(table_name)
+        except Exception as e:
+            logger.error(f"JSONPath extraction failed: {e}", exc_info=True)
+            return result
 
-        return tables
-    
     def _format_response(self, result: str) -> List[Dict[str, Any]]:
         """
         Format result as MCP TextContent.
