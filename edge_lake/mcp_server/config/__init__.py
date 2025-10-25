@@ -60,7 +60,8 @@ class Config:
         self.nodes: List[NodeConfig] = []
         self.tools: List[ToolConfig] = []
         self.client_config: Dict[str, Any] = {}
-        
+        self.testing_mode: bool = False  # Testing mode flag
+
         # Load configurations
         self._load_nodes_config()
         self._load_tools_config()
@@ -116,12 +117,17 @@ class Config:
         try:
             with open(tools_file, 'r') as f:
                 config = yaml.safe_load(f)
-            
+
+            # Load testing mode flag (defaults to False if not present)
+            self.testing_mode = config.get('testing', False)
+
             # Load tools
             for tool_data in config.get('tools', []):
                 self.tools.append(ToolConfig(tool_data))
 
             logger.info(f"Loaded {len(self.tools)} tool configurations")
+            if self.testing_mode:
+                logger.info("Testing mode ENABLED - detailed tool execution logs will be shown")
             
         except Exception as e:
             logger.error(f"Failed to load tools configuration: {e}")

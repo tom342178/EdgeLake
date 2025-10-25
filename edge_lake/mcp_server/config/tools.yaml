@@ -1,7 +1,20 @@
 # EdgeLake MCP Tools Configuration
 # This file defines the MCP tools dynamically based on EdgeLake commands from member_cmd.py
+#
+# Testing Mode:
+#   Set 'testing: true' to enable detailed debug logging for tool execution.
+#   When enabled, logs will show:
+#     - Tool entry with input arguments
+#     - Built command sent to member_cmd.process_cmd()
+#     - Raw output from member_cmd
+#     - Final formatted response sent to MCP client
+#   Default: false (not present = false)
+#   Usage: Add 'testing: true' at the top level to enable globally
 
 version: "1.0"
+
+# Enable testing mode (optional, defaults to false)
+# testing: true
 
 tools:
   # Database Discovery Tools

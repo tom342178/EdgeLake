@@ -45,7 +45,12 @@ class ToolExecutor:
         Returns:
             List of TextContent dicts for MCP response
         """
-        logger.debug(f"Executing tool '{name}' with arguments: {arguments}")
+        # Testing mode: log tool entry and inputs
+        if self.config.testing_mode:
+            logger.info(f"[TESTING] Tool '{name}' called")
+            logger.info(f"[TESTING] Input arguments: {json.dumps(arguments, indent=2)}")
+        else:
+            logger.debug(f"Executing tool '{name}' with arguments: {arguments}")
 
         try:
             # Get tool configuration
@@ -62,6 +67,10 @@ class ToolExecutor:
             else:
                 # All other tools: build command from template and execute
                 result = await self._execute_edgelake_command(tool_config, arguments, self.client)
+
+            # Testing mode: log final response
+            if self.config.testing_mode:
+                logger.info(f"[TESTING] Final response for '{name}': {result[:500] if isinstance(result, str) else str(result)[:500]}...")
 
             # Format response
             return self._format_response(result)
@@ -146,10 +155,22 @@ class ToolExecutor:
         # For network queries, wrap with 'run client ()' to distribute across network
         if headers and headers.get('destination') == 'network':
             command = f'run client () {command}'
-            logger.debug(f"Network query - wrapped with run client: {command}")
+            if self.config.testing_mode:
+                logger.info(f"[TESTING] Network query - wrapped with run client")
+            else:
+                logger.debug(f"Network query - wrapped with run client: {command}")
+
+        # Testing mode: log command sent to member_cmd
+        if self.config.testing_mode:
+            logger.info(f"[TESTING] Command sent to member_cmd.process_cmd(): {command}")
 
         # Execute command
         result = await client.execute_command(command, headers=headers)
+
+        # Testing mode: log raw output from member_cmd
+        if self.config.testing_mode:
+            raw_preview = result[:500] if isinstance(result, str) else str(result)[:500]
+            logger.info(f"[TESTING] Raw output from member_cmd: {raw_preview}...")
 
         # Parse response based on inline response_parser configuration
         response_parser = edgelake_cmd.get('response_parser')
