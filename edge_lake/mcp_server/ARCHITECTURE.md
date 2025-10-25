@@ -624,6 +624,109 @@ MCP_TOOLS=auto
 5. ✅ **Observable**: `get mcp server` shows current state
 6. ✅ **Configurable**: Works in startup scripts and interactively
 
+## EdgeLake Process Registry Integration
+
+The MCP Server integrates with EdgeLake's process registry system to appear in `get processes` output alongside other EdgeLake services like TCP, REST, Operator, etc.
+
+### Process Registry Pattern
+
+EdgeLake maintains a global `test_active_` dictionary in `edge_lake/cmd/member_cmd.py` that tracks all running services:
+
+```python
+test_active_ = {
+    "service_key": ("Display Name", is_active_function, get_info_function),
+    ...
+}
+```
+
+Each service registers with three components:
+
+1. **Display Name**: Human-readable name shown in output (e.g., "MCP Server")
+2. **is_active_function**: Returns `True` if service is running, `False` otherwise
+3. **get_info_function**: Returns details string for "Details" column (can be `None`)
+
+### Status Values
+
+The `get processes` command determines status based on the `is_active_function`:
+- Returns `True` → Status: **"Running"**
+- Returns `False` → Status: **"Not declared"**
+
+### MCP Server Registration
+
+The MCP Server registers itself when started via `run mcp server`:
+
+**Location**: `edge_lake/cmd/member_cmd.py:8603-8614`
+
+```python
+from edge_lake.mcp_server.start_threaded import is_running, get_info
+add_service("mcp-server", ("MCP Server", is_running, get_info))
+```
+
+**Functions** (`edge_lake/mcp_server/start_threaded.py`):
+
+```python
+def is_running() -> bool:
+    """Check if MCP server thread is alive"""
+    global _mcp_thread
+    return _mcp_thread is not None and _mcp_thread.is_alive()
+
+def get_info(status=None) -> str:
+    """Return status details string"""
+    # Example output: "Listening on: 0.0.0.0:50051, Mode: embedded, Tools: 6"
+    info_parts = []
+
+    if server.transport == "sse" and server.port:
+        info_parts.append(f"Listening on: 0.0.0.0:{server.port}")
+    else:
+        info_parts.append(f"Transport: {server.transport}")
+
+    info_parts.append(f"Mode: {server.mode}")
+    info_parts.append(f"Tools: {tool_count}")
+
+    if server.config.testing_mode:
+        info_parts.append("Testing: ON")
+
+    return ", ".join(info_parts)
+```
+
+### Example Output
+
+```
+EL > get processes
+
+Process         | Status    | Details
+--------------- | --------- | -------------------------------------------------
+TCP             | Running   | Listening on: 0.0.0.0:32048 and 192.168.1.106
+REST            | Running   | Listening on: 0.0.0.0:32049, Threads Pool: 5, Timeout: 20, SSL: False
+Operator        | Running   | Cluster: cluster01, Table: operators
+MCP Server      | Running   | Listening on: 0.0.0.0:50051, Mode: embedded, Tools: 6
+Scheduler       | Running   | 3 active tasks
+Streamer        | Not declared
+```
+
+### Adding Future Services to Registry
+
+To register new services with the process registry:
+
+1. **Create status functions** in your service module:
+   ```python
+   def is_running() -> bool:
+       return _service_thread is not None and _service_thread.is_alive()
+
+   def get_info(status=None) -> str:
+       return f"Your service details here"
+   ```
+
+2. **Register when service starts**:
+   ```python
+   from edge_lake.cmd import member_cmd
+   member_cmd.add_service("service-key", ("Display Name", is_running, get_info))
+   ```
+
+3. **Service appears in `get processes`** automatically
+
+**Note**: The `status` parameter in `get_info(status=None)` is for compatibility with EdgeLake's `ProcessStat` pattern. Most services don't use it and set it to `None`.
+
 ## Future Enhancements
 
 - Dynamic tool reloading when services start/stop

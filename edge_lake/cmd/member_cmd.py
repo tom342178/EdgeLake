@@ -8600,6 +8600,23 @@ def _run_mcp_server(status, io_buff_in, cmd_words, trace):
         commands["run mcp server"]['capabilities'] = capabilities
         commands["run mcp server"]['server'] = mcp_server
 
+        # Register with EdgeLake process registry for 'get processes'
+        try:
+            from edge_lake.mcp_server.start_threaded import is_running, get_info
+            # Store references in commands dict so get_info can access them
+            commands["run mcp server"]['_is_running'] = is_running
+            commands["run mcp server"]['_get_info'] = get_info
+            # Update global instance reference for status queries
+            from edge_lake.mcp_server import start_threaded
+            start_threaded._mcp_server_instance = mcp_server
+            start_threaded._mcp_thread = mcp_thread
+            # Register service
+            add_service("mcp-server", ("MCP Server", is_running, get_info))
+        except Exception as e:
+            # Non-fatal error - server still works, just won't show in 'get processes'
+            if trace:
+                utils_print.output(f"\r\n[MCP Server] Warning: Failed to register with process registry: {str(e)}", True)
+
         # Output startup message
         tool_count = len(enabled_tools) if enabled_tools else 'all'
         if trace:
