@@ -19,54 +19,104 @@ This is a fundamental architectural principle that ensures:
 - **Clarity**: Tool behavior is defined in one place (tools.yaml)
 - **Testability**: Configuration can be validated independently of code
 
-#### Correct Pattern (Generic Processing)
+#### ✅ Correct Pattern (Current Architecture)
+
+**The executor has exactly TWO execution paths:**
 
 ```python
-# executor.py - Generic dispatcher
-self.query_interfaces = {
-    'blockchain_query': BlockchainQuery(),
-    'node_query': NodeQuery(),
-    'metrics_query': MetricsQuery()  # Just add to dict
-}
-
+# executor.py - Purely configuration-driven
 async def execute_tool(self, name, arguments):
-    if cmd_type in self.query_interfaces:
-        # Generic routing - NO tool-specific logic
-        result = await self._execute_query_interface(cmd_type, edgelake_cmd, arguments)
+    tool_config = self.config.get_tool_by_name(name)
+    edgelake_cmd = tool_config.edgelake_command
+    cmd_type = edgelake_cmd.get('type')
+
+    if cmd_type == 'internal':
+        # Server-side operations only (e.g., server_info)
+        result = await self._execute_internal(edgelake_cmd, arguments)
+    else:
+        # ALL EdgeLake commands use this path
+        result = await self._execute_edgelake_command(tool_config, arguments, self.client)
+
+    return self._format_response(result)
 ```
+
+**All tool behavior is defined in tools.yaml:**
 
 ```yaml
-# tools.yaml - Configuration defines behavior
+# Example 1: Simple command template
 - name: node_status
   edgelake_command:
-    type: "node_query"
-    query_type: "get_node_status"
+    type: "get"
+    method: "status"
+    template: "get status"
+
+# Example 2: Dynamic SQL building
+- name: query
+  edgelake_command:
+    type: "sql"
+    method: "query"
+    build_sql: true
+    headers:
+      destination: "network"
+
+# Example 3: Command with response parsing
+- name: list_databases
+  edgelake_command:
+    type: "get"
+    method: "blockchain_table"
+    template: "blockchain get table bring.json"
+    parse_response: "extract_databases"
 ```
 
-#### Incorrect Pattern (NEVER DO THIS)
+**Flow:**
+```
+tools.yaml → CommandBuilder.build_command() → EdgeLakeDirectClient.execute_command() → member_cmd.process_cmd()
+```
+
+#### ❌ Incorrect Pattern (NEVER DO THIS)
 
 ```python
+# ❌ BAD: Creating intermediate query processor modules
+# These were REMOVED in commit 9052858 - do NOT recreate them
+core/blockchain_query.py  # DELETED
+core/node_query.py        # DELETED
+core/sql_query.py         # DELETED
+
+# ❌ BAD: Adding query_interfaces dict
+self.query_interfaces = {
+    'blockchain_query': BlockchainQuery(),  # NO!
+    'node_query': NodeQuery()               # NO!
+}
+
 # ❌ BAD: Tool-specific methods in executor
-async def _execute_blockchain_query(self, ...):  # Specific implementation
-async def _execute_node_query(self, ...):       # Another specific implementation
-async def _execute_metrics_query(self, ...):    # Would need method for each type
+async def _execute_blockchain_query(self, ...):  # NO!
+async def _execute_node_query(self, ...):       # NO!
 
 # ❌ BAD: Tool-specific conditionals
-if name == "node_status":
+if name == "node_status":                        # NO!
     return await self._get_node_status()
-elif name == "blockchain_get":
-    return await self._blockchain_get()
 ```
 
-#### Adding New Query Types
+#### Adding New Tools
 
-To add a new query type (e.g., `metrics_query`):
+To add a new tool (e.g., `operator_status`):
 
-1. **Create query module**: `core/metrics_query.py` with `execute_query(query_type, **kwargs)` method
-2. **Register in executor**: Add to `query_interfaces` dict
-3. **Define in tools.yaml**: Add tool with `type: "metrics_query"`
+1. **Add to tools.yaml ONLY:**
+   ```yaml
+   - name: operator_status
+     description: "Get operator node statistics"
+     edgelake_command:
+       type: "get"
+       method: "operator"
+       template: "get operator"
+     input_schema:
+       type: object
+       properties: {}
+   ```
 
-**NO changes to executor logic required** - it automatically routes to the new interface.
+2. **That's it!** The executor automatically handles it through the generic `_execute_edgelake_command()` path.
+
+**NO code changes required** - only configuration changes.
 
 ## Node-Aware MCP Services
 

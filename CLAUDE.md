@@ -170,7 +170,7 @@ The system uses a permissioned network model:
 
 **MCP Server Location**: `edge_lake/mcp_server/`
 
-### Fundamental Design Constraint
+### Fundamental Design Constraint (CURRENT ARCHITECTURE - Post Refactor)
 
 **ALL tool behavior MUST be defined in `tools.yaml` and processed through generic handlers.**
 
@@ -178,46 +178,81 @@ The system uses a permissioned network model:
 
 This is a non-negotiable architectural principle. When working on the MCP server:
 
-#### ✅ Correct Approach
+#### ✅ Correct Approach (Current Implementation)
 ```python
-# executor.py - Generic dispatcher
-self.query_interfaces = {
-    'blockchain_query': BlockchainQuery(),
-    'node_query': NodeQuery()
-}
-
+# executor.py - TWO execution paths ONLY
 async def execute_tool(self, name, arguments):
-    if cmd_type in self.query_interfaces:
-        # Generic routing - works for ALL query types
-        result = await self._execute_query_interface(cmd_type, edgelake_cmd, arguments)
+    tool_config = self.config.get_tool_by_name(name)
+    edgelake_cmd = tool_config.edgelake_command
+    cmd_type = edgelake_cmd.get('type')
+
+    if cmd_type == 'internal':
+        # Server-side operations only (e.g., server_info)
+        result = await self._execute_internal(edgelake_cmd, arguments)
+    else:
+        # ALL EdgeLake commands use this generic path
+        result = await self._execute_edgelake_command(tool_config, arguments, self.client)
+
+    return self._format_response(result)
 ```
 
 ```yaml
-# tools.yaml - Configuration defines behavior
+# tools.yaml - Configuration defines ALL behavior
 - name: node_status
   edgelake_command:
-    type: "node_query"
-    query_type: "get_node_status"
+    type: "get"
+    method: "status"
+    template: "get status"
+
+- name: query
+  edgelake_command:
+    type: "sql"
+    build_sql: true
+    headers:
+      destination: "network"
 ```
 
-#### ❌ Incorrect Approach (NEVER DO)
+**Flow:** `tools.yaml → CommandBuilder → EdgeLakeDirectClient → member_cmd.process_cmd()`
+
+#### ❌ Incorrect Approach (DO NOT DO - These were REMOVED in commit 9052858)
 ```python
+# ❌ BAD: Creating intermediate query processor modules
+core/blockchain_query.py  # DELETED - do NOT recreate
+core/node_query.py        # DELETED - do NOT recreate
+core/sql_query.py         # DELETED - do NOT recreate
+
+# ❌ BAD: Adding query_interfaces dict
+self.query_interfaces = {
+    'blockchain_query': BlockchainQuery(),  # NO!
+    'node_query': NodeQuery()               # NO!
+}
+
 # ❌ BAD: Tool-specific methods
-async def _execute_blockchain_query(self, ...):
-async def _execute_node_query(self, ...):
+async def _execute_blockchain_query(self, ...):  # NO!
+async def _execute_node_query(self, ...):       # NO!
 
 # ❌ BAD: Tool-specific conditionals
-if name == "node_status":
+if name == "node_status":                        # NO!
     return await self._get_node_status()
 ```
 
 ### Adding New MCP Tools
 
-1. **Create query module** (if new type needed): `core/new_query.py` with `execute_query()` method
-2. **Register interface**: Add to `executor.py` `query_interfaces` dict
-3. **Configure in tools.yaml**: Define tool with appropriate `type` and `query_type`
+**To add a new tool - ONLY edit tools.yaml:**
 
-**NO changes to executor logic required** - it routes automatically.
+```yaml
+- name: operator_status
+  description: "Get operator node statistics"
+  edgelake_command:
+    type: "get"
+    method: "operator"
+    template: "get operator"
+  input_schema:
+    type: object
+    properties: {}
+```
+
+**That's it!** No code changes needed. The executor handles it automatically through the generic `_execute_edgelake_command()` path.
 
 ### MCP Server Modes
 
@@ -230,12 +265,23 @@ if name == "node_status":
 - `autostart.al`: Autostart script for embedded mode
 - `config/tools.yaml`: **Single source of truth** for ALL tool definitions
 - `tools/executor.py`: Generic tool execution engine (NO tool-specific code)
-- `core/blockchain_query.py`: Direct Python API access to blockchain metadata
-- `core/node_query.py`: Direct Python API access to node information
-- `core/direct_client.py`: Direct `member_cmd.process_cmd()` integration
+- `tools/generator.py`: Generates MCP tool definitions from tools.yaml
+- `core/direct_client.py`: Direct `member_cmd.process_cmd()` integration (bypasses HTTP)
+- `core/command_builder.py`: Builds EdgeLake commands from templates
+- `core/query_builder.py`: Builds SQL queries from arguments
+- `capabilities.py`: Node capability detection for tool auto-enabling
 
-### Why Direct Python APIs?
+### How Commands Execute
 
-Commands like `blockchain get table` and `get status` print to stdout instead of populating `io_buff` when called via `member_cmd.process_cmd()`. Direct Python API access (e.g., `metadata.table_to_cluster_`) bypasses this limitation.
+1. **MCP client calls tool** (e.g., `query(database="demo", table="sensors")`)
+2. **executor.py** looks up tool in `tools.yaml`
+3. **command_builder.py** builds EdgeLake command from template
+4. **direct_client.py** calls `member_cmd.process_cmd()` directly (no HTTP)
+5. **Result extraction** from `io_buff` OR `stdout` (captured with `redirect_stdout`)
+6. **Response formatting** as JSON or text
+
+### Why Capture stdout?
+
+Some EdgeLake commands (like `blockchain get table`, `get status`) print to stdout instead of populating `io_buff` when called via `member_cmd.process_cmd()`. The `direct_client.py` captures both outputs to handle this.
 
 **Full details**: See `edge_lake/mcp_server/ARCHITECTURE.md`
