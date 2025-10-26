@@ -438,9 +438,17 @@ class QueryExecutor:
         validated_sql = validation_result["validated_sql"]
         select_parsed = validation_result["select_parsed"]
 
+        # Step 1.5: Check if query is pass-through (no consolidation needed)
+        # Pass-through queries can use the original SQL directly without transformation
+        is_pass_through = select_parsed.get_pass_through()
+        if is_pass_through:
+            logger.debug("Query is pass-through (no aggregation/grouping/ordering) - using original SQL")
+            # Use original SQL for pass-through queries
+            validated_sql = sql_query
+
         # Step 2: Select execution mode
         if mode == "auto":
-            mode = self._select_mode(sql_query)
+            mode = self._select_mode(sql_query, is_pass_through)
             logger.debug(f"Auto-selected mode: {mode}")
 
         # Step 3: Execute based on mode
@@ -459,12 +467,13 @@ class QueryExecutor:
                 fetch_size
             )
 
-    def _select_mode(self, sql_query: str) -> str:
+    def _select_mode(self, sql_query: str, is_pass_through: bool = False) -> str:
         """
         Automatically select execution mode based on query characteristics.
 
         Args:
             sql_query: SQL query
+            is_pass_through: Whether query requires no consolidation
 
         Returns:
             "streaming" or "batch"
@@ -487,6 +496,11 @@ class QueryExecutor:
 
         if any(indicator in sql_lower for indicator in batch_indicators):
             return "batch"
+
+        # Pass-through queries (no aggregation/grouping) benefit from streaming
+        # as they can return large result sets
+        if is_pass_through:
+            return "streaming"
 
         # Use streaming for:
         # - SELECT * queries (potentially large)
