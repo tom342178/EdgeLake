@@ -18,7 +18,7 @@ class ToolExecutor:
     """
     Executes MCP tools using EdgeLake client and formats responses.
     """
-    
+
     def __init__(self, client, command_builder, query_builder, config):
         """
         Initialize tool executor.
@@ -33,6 +33,15 @@ class ToolExecutor:
         self.command_builder = command_builder
         self.query_builder = query_builder
         self.config = config
+
+        # Initialize query executor for hybrid validation + streaming approach
+        try:
+            from ..core.query_executor import QueryExecutor
+            self.query_executor = QueryExecutor()
+            logger.debug("QueryExecutor initialized for streaming query support")
+        except ImportError as e:
+            logger.warning(f"QueryExecutor not available: {e}")
+            self.query_executor = None
     
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -64,6 +73,9 @@ class ToolExecutor:
 
             if cmd_type == 'internal':
                 result = await self._execute_internal(edgelake_cmd, arguments)
+            elif cmd_type == 'sql' and self.query_executor:
+                # Use hybrid query executor for SQL queries (validation + streaming)
+                result = await self._execute_sql_query(tool_config, arguments)
             else:
                 # All other tools: build command from template and execute
                 result = await self._execute_edgelake_command(tool_config, arguments, self.client)
@@ -115,6 +127,68 @@ class ToolExecutor:
         }
 
         return json.dumps(info, indent=2)
+
+    async def _execute_sql_query(self, tool_config, arguments: Dict[str, Any]) -> str:
+        """
+        Execute SQL query using QueryExecutor (hybrid validation + streaming approach).
+
+        This method:
+        1. Builds SQL query from arguments
+        2. Uses QueryExecutor for validation via select_parser()
+        3. Executes with batch mode (streaming mode requires generator support)
+        4. Returns formatted JSON results
+
+        Args:
+            tool_config: Tool configuration
+            arguments: Tool arguments
+
+        Returns:
+            JSON-formatted query results
+
+        Raises:
+            Exception: If query validation or execution fails
+        """
+        edgelake_cmd = tool_config.edgelake_command
+
+        # Build SQL query from arguments
+        sql_query = self.command_builder.build_sql_query(arguments)
+        database = arguments.get('database')
+
+        logger.debug(f"Executing SQL query via QueryExecutor: {sql_query}")
+
+        if self.config.testing_mode:
+            logger.info(f"[TESTING] Using QueryExecutor for database '{database}'")
+            logger.info(f"[TESTING] SQL Query: {sql_query}")
+
+        # Execute query using hybrid approach (validation + execution)
+        # Note: Using batch mode for now as streaming requires async generator support in MCP
+        result = await self.query_executor.execute_query(
+            dbms_name=database,
+            sql_query=sql_query,
+            mode="batch",  # Use batch for MCP compatibility
+            fetch_size=100
+        )
+
+        if self.config.testing_mode:
+            logger.info(f"[TESTING] Query executed. Rows returned: {result.get('total_rows', 0)}")
+
+        # Extract rows from result
+        rows = result.get('rows', [])
+
+        # Apply response parser if configured (for JSONPath extraction)
+        response_parser = edgelake_cmd.get('response_parser')
+        if response_parser:
+            # Wrap rows in Query structure for JSONPath compatibility
+            wrapped_result = {"Query": rows}
+            parsed_result = self._parse_response(wrapped_result, response_parser, arguments)
+
+            if self.config.testing_mode:
+                logger.info(f"[TESTING] Applied response parser, result count: {len(parsed_result) if isinstance(parsed_result, list) else 1}")
+
+            return json.dumps(parsed_result, indent=2)
+
+        # Return rows as JSON
+        return json.dumps(rows, indent=2)
     
     async def _execute_edgelake_command(self, tool_config, arguments: Dict[str, Any],
                                        client) -> str:
