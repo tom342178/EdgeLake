@@ -506,7 +506,13 @@ class MCPSSETester:
 
         response = self.send_mcp_request("tools/call", params, timeout=35.0)
 
-        if response and "result" in response:
+        if response and "error" in response:
+            # Query failed with an error
+            error = response["error"]
+            error_msg = error.get("message", "Unknown error")
+            print(f"✗ query failed: {error_msg}")
+            return False
+        elif response and "result" in response:
             print(f"✓ query successful")
             result = response["result"]
             content = result.get("content", [])
@@ -529,7 +535,7 @@ class MCPSSETester:
                     print(f"  Response: {text[:200]}...")
             return True
         else:
-            print(f"✗ query failed")
+            print(f"✗ query failed - no response")
             return False
 
     def run_all_tests(self) -> bool:

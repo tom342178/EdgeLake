@@ -74,8 +74,18 @@ class ToolExecutor:
             if cmd_type == 'internal':
                 result = await self._execute_internal(edgelake_cmd, arguments)
             elif cmd_type == 'sql' and self.query_executor:
-                # Use hybrid query executor for SQL queries (validation + streaming)
-                result = await self._execute_sql_query(tool_config, arguments)
+                # Check if this is a network query (distributed query)
+                headers = edgelake_cmd.get('headers', {})
+                is_network_query = headers.get('destination') == 'network'
+
+                if is_network_query:
+                    # Network queries: use standard command path (run client () sql ...)
+                    # These don't require local database connectivity
+                    result = await self._execute_edgelake_command(tool_config, arguments, self.client)
+                else:
+                    # Local queries: use QueryExecutor for validation + streaming
+                    # These require the database to be connected locally
+                    result = await self._execute_sql_query(tool_config, arguments)
             else:
                 # All other tools: build command from template and execute
                 result = await self._execute_edgelake_command(tool_config, arguments, self.client)
@@ -89,7 +99,9 @@ class ToolExecutor:
 
         except Exception as e:
             logger.error(f"Error executing tool '{name}': {e}", exc_info=True)
-            return self._format_error(str(e))
+            # Re-raise exception so MCP SDK can convert it to proper JSON-RPC error
+            # This ensures test clients see an error response, not a successful result
+            raise
     
     
     async def _execute_internal(self, edgelake_cmd: Dict[str, Any], 
