@@ -88,7 +88,7 @@ class EdgeLakeMCPServer:
             self.client = EdgeLakeDirectClient(
                 max_workers=self.config.get_max_workers()
             )
-            logger.info("Using direct EdgeLake integration (embedded mode)")
+            logger.debug("Using direct EdgeLake integration (embedded mode)")
         else:
             # Use HTTP client for standalone/threaded modes
             default_node = self.config.get_default_node()
@@ -98,7 +98,7 @@ class EdgeLakeMCPServer:
                 timeout=self.config.get_request_timeout(),
                 max_workers=self.config.get_max_workers()
             )
-            logger.info(f"Using HTTP client: {default_node.host}:{default_node.port}")
+            logger.debug(f"Using HTTP client: {default_node.host}:{default_node.port}")
 
         # Initialize builders and generators
         self.command_builder = CommandBuilder()
@@ -376,7 +376,7 @@ class EdgeLakeMCPServer:
 
         # Shutdown SSE server if running
         if hasattr(self, 'sse_server') and self.sse_server:
-            logger.info("Shutting down SSE server")
+            logger.debug("Shutting down SSE server")
             try:
                 self.sse_server.should_exit = True
             except Exception as e:
@@ -410,7 +410,7 @@ async def async_main():
         else:
             server.run_threaded()
     except KeyboardInterrupt:
-        logger.info("Server stopped by user")
+        logger.debug("Server stopped by user")
     except Exception as e:
         logger.error(f"Server error: {e}", exc_info=True)
         sys.exit(1)
@@ -423,7 +423,7 @@ def main():
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:
-        logger.info("Server stopped by user")
+        logger.debug("Server stopped by user")
     except Exception as e:
         logger.error(f"Server error: {e}", exc_info=True)
         sys.exit(1)

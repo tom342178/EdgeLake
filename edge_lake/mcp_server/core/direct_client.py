@@ -44,7 +44,7 @@ class EdgeLakeDirectClient:
             self.process_status = process_status
             self.params = params
 
-            logger.info("EdgeLake direct client initialized")
+            logger.debug("EdgeLake direct client initialized")
 
         except ImportError as e:
             logger.error(f"Failed to import EdgeLake modules: {e}")
@@ -348,5 +348,5 @@ class EdgeLakeDirectClient:
 
     def close(self):
         """Shutdown the thread pool executor"""
-        logger.info("Shutting down EdgeLake direct client")
+        logger.debug("Shutting down EdgeLake direct client")
         self.executor.shutdown(wait=True)

@@ -45,7 +45,7 @@ class EdgeLakeClient:
         self.base_url = f"http://{host}:{port}"
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         
-        logger.info(f"EdgeLake client initialized: {self.base_url}")
+        logger.debug(f"EdgeLake client initialized: {self.base_url}")
     
     def _execute_request_with_requests(self, method: str, command: str, 
                                        headers: Optional[Dict[str, str]] = None) -> Any:
@@ -199,7 +199,7 @@ class EdgeLakeClient:
         Returns:
             List of database names
         """
-        logger.info("Fetching databases")
+        logger.debug("Fetching databases")
         
         try:
             result = await self.execute_command("blockchain get table")
@@ -214,7 +214,7 @@ class EdgeLakeClient:
             else:
                 databases = []
             
-            logger.info(f"Found {len(databases)} databases")
+            logger.debug(f"Found {len(databases)} databases")
             return databases
             
         except Exception as e:
@@ -285,7 +285,7 @@ class EdgeLakeClient:
         Returns:
             List of table names
         """
-        logger.info(f"Fetching tables for database '{database}'")
+        logger.debug(f"Fetching tables for database '{database}'")
         
         try:
             result = await self.execute_command("blockchain get table")
@@ -300,7 +300,7 @@ class EdgeLakeClient:
             else:
                 tables = []
             
-            logger.info(f"Found {len(tables)} tables in '{database}'")
+            logger.debug(f"Found {len(tables)} tables in '{database}'")
             return tables
             
         except Exception as e:
@@ -375,7 +375,7 @@ class EdgeLakeClient:
         Returns:
             JSON string containing table schema
         """
-        logger.info(f"Fetching schema for '{database}.{table}'")
+        logger.debug(f"Fetching schema for '{database}.{table}'")
         
         try:
             command = f'get columns where dbms="{database}" and table="{table}" and format=json'
@@ -404,7 +404,7 @@ class EdgeLakeClient:
         Returns:
             Query results as formatted string
         """
-        logger.info(f"Executing query on '{database}': {query}")
+        logger.debug(f"Executing query on '{database}': {query}")
         
         try:
             command = f'sql {database} format = {output_format} "{query}"'
@@ -430,7 +430,7 @@ class EdgeLakeClient:
         Returns:
             Node status information as JSON string
         """
-        logger.info("Fetching node status")
+        logger.debug("Fetching node status")
         
         try:
             result = await self.execute_command("get status")
@@ -448,5 +448,5 @@ class EdgeLakeClient:
     
     def close(self):
         """Shutdown the thread pool executor"""
-        logger.info("Shutting down EdgeLake client")
+        logger.debug("Shutting down EdgeLake client")
         self.executor.shutdown(wait=True)

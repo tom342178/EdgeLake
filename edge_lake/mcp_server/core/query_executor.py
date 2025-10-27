@@ -397,7 +397,7 @@ class QueryExecutor:
         self.streaming_executor = StreamingExecutor()
         self.batch_executor = BatchExecutor()
 
-        logger.info("QueryExecutor initialized with hybrid validation + streaming approach")
+        logger.debug("QueryExecutor initialized with hybrid validation + streaming approach")
 
     async def execute_query(
         self,

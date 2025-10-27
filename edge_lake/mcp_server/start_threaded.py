@@ -45,7 +45,7 @@ def start_mcp_server_threaded(config_dir: Optional[str] = None) -> threading.Thr
     try:
         from .server import EdgeLakeMCPServer
 
-        logger.info("Starting EdgeLake MCP Server in threaded mode")
+        logger.debug("Starting EdgeLake MCP Server in threaded mode")
 
         # Create server instance
         server = EdgeLakeMCPServer(mode="threaded", config_dir=config_dir)
@@ -60,7 +60,7 @@ def start_mcp_server_threaded(config_dir: Optional[str] = None) -> threading.Thr
         mcp_thread.start()
         _mcp_thread = mcp_thread
 
-        logger.info(f"EdgeLake MCP Server thread started (thread_id={mcp_thread.ident})")
+        logger.debug(f"EdgeLake MCP Server thread started (thread_id={mcp_thread.ident})")
         return mcp_thread
 
     except ImportError as e:
@@ -97,7 +97,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nStopping EdgeLake MCP Server...")
-        logger.info("EdgeLake MCP Server stopped by user")
+        logger.debug("EdgeLake MCP Server stopped by user")
 
 
 def is_running() -> bool:

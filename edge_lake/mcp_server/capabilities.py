@@ -55,7 +55,7 @@ def detect_node_capabilities() -> Dict[str, Any]:
         if capabilities['is_operator']:
             capabilities['operator_clusters'] = _get_operator_clusters()
 
-        logger.info(f"Detected node capabilities: {capabilities}")
+        logger.debug(f"Detected node capabilities: {capabilities}")
 
     except Exception as e:
         logger.error(f"Error detecting capabilities: {e}", exc_info=True)
@@ -135,7 +135,7 @@ def filter_tools_by_capability(capabilities: Dict[str, Any]) -> List[str]:
             # Only add cluster_info if not already added
             enabled_tools.append('cluster_info')
 
-    logger.info(f"Enabled {len(enabled_tools)} MCP tools based on capabilities")
+    logger.debug(f"Enabled {len(enabled_tools)} MCP tools based on capabilities")
     logger.debug(f"Enabled tools: {enabled_tools}")
 
     return enabled_tools

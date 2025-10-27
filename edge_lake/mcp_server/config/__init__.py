@@ -100,7 +100,7 @@ class Config:
             # Load client configuration
             self.client_config = config.get('client', {})
             
-            logger.info(f"Loaded {len(self.nodes)} node configurations")
+            logger.debug(f"Loaded {len(self.nodes)} node configurations")
             
         except Exception as e:
             logger.error(f"Failed to load nodes configuration: {e}")
@@ -125,7 +125,7 @@ class Config:
             for tool_data in config.get('tools', []):
                 self.tools.append(ToolConfig(tool_data))
 
-            logger.info(f"Loaded {len(self.tools)} tool configurations")
+            logger.debug(f"Loaded {len(self.tools)} tool configurations")
             if self.testing_mode:
                 logger.info("Testing mode ENABLED - detailed tool execution logs will be shown")
             
@@ -154,7 +154,7 @@ class Config:
                         node.host = host_override
                     if port_override:
                         node.port = int(port_override)
-                    logger.info(f"Applied env overrides to default node: {node}")
+                    logger.debug(f"Applied env overrides to default node: {node}")
                     break
     
     def get_default_node(self) -> NodeConfig:
