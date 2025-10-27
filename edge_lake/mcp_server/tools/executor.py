@@ -224,8 +224,8 @@ class ToolExecutor:
 
             # Build full SQL command
             database = arguments.get('database')
-            output_format = arguments.get('format', 'json')
-            command = f'sql {database} format = {output_format} "{sql_query}"'
+            # Always use json format for MCP compatibility (table format removed)
+            command = f'sql {database} format = json "{sql_query}"'
 
             # Get headers
             headers = edgelake_cmd.get('headers')

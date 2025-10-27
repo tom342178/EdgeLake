@@ -499,8 +499,7 @@ class MCPSSETester:
                 "database": database,
                 "table": table,
                 "select": ["*"],
-                "limit": 5,
-                "format": "json"
+                "limit": 5
             }
         }
 
