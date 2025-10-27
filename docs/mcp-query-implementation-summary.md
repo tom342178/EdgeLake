@@ -6,7 +6,7 @@ Successfully implemented hybrid query execution system for EdgeLake's MCP server
 
 **Branch**: `feat-mcp-server-query`
 **Based On**: `feat-mcp-service`
-**Commit**: `fd2d97b`
+**Latest Commit**: `4921e45` (includes pass-through optimization)
 
 ## Architecture Components
 
@@ -146,6 +146,64 @@ By using `select_parser()`, the system ensures:
    - `INCREMENTS()` → delta values for counter metrics
 5. **Query Optimization**: Applies EdgeLake-specific optimizations
 
+## Pass-Through Optimization (Commit 4921e45)
+
+### What is Pass-Through?
+
+EdgeLake has a built-in optimization where queries that **don't require consolidation** bypass the entire consolidation table mechanism and return results directly from operators.
+
+### When is Pass-Through Enabled?
+
+Pass-through is **enabled** for simple queries without:
+- ❌ Aggregate functions (AVG, SUM, COUNT, MIN, MAX)
+- ❌ GROUP BY clause
+- ❌ ORDER BY clause
+- ❌ Per-column LIMIT
+
+### Pass-Through Examples
+
+**✅ Pass-Through Queries** (no consolidation):
+```sql
+-- Simple SELECT with WHERE
+SELECT * FROM sensor_data WHERE device_id = 'sensor1'
+
+-- Column selection with filter
+SELECT timestamp, value FROM sensor_data WHERE timestamp > '2024-01-01'
+
+-- Basic LIMIT
+SELECT * FROM sensor_data LIMIT 100
+```
+
+**❌ Consolidation Required** (pass_through = False):
+```sql
+-- Has aggregate
+SELECT AVG(temperature) FROM sensor_data
+
+-- Has GROUP BY
+SELECT device_id, COUNT(*) FROM sensor_data GROUP BY device_id
+
+-- Has ORDER BY
+SELECT * FROM sensor_data ORDER BY timestamp DESC
+```
+
+### Implementation
+
+```python
+# Check if query needs consolidation
+is_pass_through = select_parsed.get_pass_through()
+if is_pass_through:
+    logger.debug("Query is pass-through - using original SQL")
+    validated_sql = sql_query  # Use original, not transformed
+```
+
+### Benefits
+
+1. **Avoids unnecessary transformation**: Simple queries remain unchanged
+2. **No consolidation table**: Skips `CREATE TABLE query_N` step
+3. **Direct streaming**: Results flow directly from operators
+4. **Better performance**: Fewer database operations
+5. **Lower memory usage**: No intermediate table creation
+
 ## Performance Characteristics
 
 ### Batch Mode
@@ -156,7 +214,7 @@ By using `select_parser()`, the system ensures:
 ### Streaming Mode
 - **Memory Usage**: Fixed (only one batch in memory at a time)
 - **Network**: Progressive data transfer as batches are ready
-- **Best For**: Large result sets, full table scans, real-time data
+- **Best For**: Large result sets, full table scans, real-time data, **pass-through queries**
 
 ## Testing
 
@@ -291,22 +349,38 @@ For distributed queries:
 
 **Branch**: `feat-mcp-server-query`
 
+### Commits
+
+1. **fd2d97b** - Initial implementation
+   ```
+   Feat: Implement hybrid query execution for MCP server
+
+   - QueryValidator, StreamingExecutor, BatchExecutor, QueryExecutor
+   - Integration with ToolExecutor
+   - Test suite with 4 comprehensive tests
+   ```
+
+2. **fdfbdf5** - Documentation
+   ```
+   Docs: Add implementation summary for MCP query execution
+   ```
+
+3. **4921e45** - Pass-through optimization (latest)
+   ```
+   Fix: Handle pass-through queries (no consolidation needed)
+
+   - Detects queries that don't need consolidation
+   - Uses original SQL for pass-through queries
+   - Optimizes simple SELECT queries
+   ```
+
 **Files Added**:
-- `edge_lake/mcp_server/core/query_executor.py` (499 lines)
+- `edge_lake/mcp_server/core/query_executor.py` (515 lines, includes pass-through)
 - `edge_lake/mcp_server/test_query_executor.py` (230 lines)
+- `docs/mcp-query-implementation-summary.md` (400+ lines)
 
 **Files Modified**:
 - `edge_lake/mcp_server/tools/executor.py` (+62 lines)
-
-**Total Lines**: 791 lines added
-
-**Commit Message**:
-```
-Feat: Implement hybrid query execution for MCP server
-
-Implemented comprehensive query execution system using hybrid approach:
-validation through select_parser() + streaming through low-level database APIs.
-```
 
 ## Git Workflow
 
@@ -345,8 +419,9 @@ Successfully implemented production-ready hybrid query execution system for Edge
 ✅ **Streaming Support**: Row-by-row execution via `process_fetch_rows()`
 ✅ **Batch Support**: Full result collection for small queries
 ✅ **Auto Mode**: Intelligent selection based on query characteristics
+✅ **Pass-Through Optimization**: Direct execution for simple queries (no consolidation)
 ✅ **Comprehensive Testing**: Validation, batch, streaming, and auto-mode tests
 ✅ **Backward Compatible**: Falls back to command-layer execution
 ✅ **Well Documented**: Design proposal, architecture docs, and usage examples
 
-The implementation maintains all critical validation guarantees (including distributed query transformations) while enabling efficient streaming for large result sets.
+The implementation maintains all critical validation guarantees (including distributed query transformations) while enabling efficient streaming for large result sets and optimized pass-through execution for simple queries.
