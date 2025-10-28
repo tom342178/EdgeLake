@@ -50,3 +50,8 @@ opcua==0.98.13
 #--- blobs ---
 numpy==2.2.3
 
+#--- MCP Server ---
+mcp>=1.0.0
+pydantic>=2.0.0
+jsonpath-ng>=1.6.0
+
