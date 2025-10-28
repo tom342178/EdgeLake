@@ -658,11 +658,11 @@ The MCP Server registers itself when started via `run mcp server`:
 **Location**: `edge_lake/cmd/member_cmd.py:8603-8614`
 
 ```python
-from edge_lake.mcp_server.start_threaded import is_running, get_info
+from edge_lake.mcp_server.process_registry import is_running, get_info
 add_service("mcp-server", ("MCP Server", is_running, get_info))
 ```
 
-**Functions** (`edge_lake/mcp_server/start_threaded.py`):
+**Functions** (`edge_lake/mcp_server/process_registry.py`):
 
 ```python
 def is_running() -> bool:

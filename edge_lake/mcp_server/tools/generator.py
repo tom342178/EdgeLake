@@ -29,9 +29,9 @@ class ToolGenerator:
         self.enabled_tools = enabled_tools
 
         if enabled_tools:
-            logger.info(f"Tool filtering enabled: {len(enabled_tools)} tools allowed")
+            logger.debug(f"Tool filtering enabled: {len(enabled_tools)} tools allowed")
         else:
-            logger.info("Tool filtering disabled: all tools enabled")
+            logger.debug("Tool filtering disabled: all tools enabled")
 
     def generate_tools(self) -> List[Dict[str, Any]]:
         """
@@ -55,7 +55,7 @@ class ToolGenerator:
             except Exception as e:
                 logger.error(f"Failed to generate tool '{tool_config.name}': {e}")
 
-        logger.info(f"Generated {len(tools)} tools")
+        logger.debug(f"Generated {len(tools)} tools")
         return tools
     
     def _generate_tool(self, tool_config: Any) -> Dict[str, Any]:

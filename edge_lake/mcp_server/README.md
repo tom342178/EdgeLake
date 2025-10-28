@@ -174,8 +174,8 @@ To complete the implementation:
 
 4. **Add Startup Scripts**:
    - `scripts/start_standalone.py`
-   - `scripts/start_threaded.py`
-   - Integration with EdgeLake startup
+   - `process_registry.py` - Process registry integration for 'get processes'
+   - Integration with EdgeLake startup via member_cmd.py
 
 5. **Testing**:
    - Unit tests for each component

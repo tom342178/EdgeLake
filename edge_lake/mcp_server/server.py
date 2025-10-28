@@ -44,30 +44,33 @@ except ImportError:
 # Local imports
 from . import __version__
 from .config import Config
-from .core import EdgeLakeClient, CommandBuilder, QueryBuilder
+from .core import CommandBuilder, QueryBuilder
+from .core.direct_client import EdgeLakeDirectClient
 from .tools import ToolGenerator, ToolExecutor
 
 
 class EdgeLakeMCPServer:
     """
-    EdgeLake MCP Server supporting multiple deployment modes.
+    EdgeLake MCP Server (embedded mode only).
+
+    Runs within EdgeLake process using SSE transport over HTTP.
+    Started via member_cmd.py's 'run mcp server' command.
     """
     
-    def __init__(self, mode: str = "standalone", config_dir: str = None,
-                 port: int = None, transport: str = "stdio",
-                 enabled_tools: list = None, capabilities: dict = None):
+    def __init__(self, config_dir: str = None, port: int = None,
+                 transport: str = "sse", enabled_tools: list = None,
+                 capabilities: dict = None):
         """
-        Initialize MCP server.
+        Initialize MCP server (embedded mode only).
 
         Args:
-            mode: Deployment mode ("standalone", "threaded", or "embedded")
             config_dir: Path to configuration directory (optional)
-            port: Port number (for future use)
-            transport: Transport mode ("stdio" or "sse")
+            port: Port number for SSE transport (default: 50051)
+            transport: Transport mode (only "sse" supported, stdio removed)
             enabled_tools: List of tool names to enable, or None for all
             capabilities: Node capability dictionary
         """
-        self.mode = mode
+        self.mode = "embedded"  # Only embedded mode supported
         self.port = port
         self.transport = transport
         self.enabled_tools = enabled_tools
@@ -81,24 +84,11 @@ class EdgeLakeMCPServer:
             config_path = Path(__file__).parent / "config"
             self.config = Config(config_path)
 
-        # Initialize client based on mode
-        if mode == "embedded":
-            # Use direct integration client (no HTTP)
-            from .core.direct_client import EdgeLakeDirectClient
-            self.client = EdgeLakeDirectClient(
-                max_workers=self.config.get_max_workers()
-            )
-            logger.info("Using direct EdgeLake integration (embedded mode)")
-        else:
-            # Use HTTP client for standalone/threaded modes
-            default_node = self.config.get_default_node()
-            self.client = EdgeLakeClient(
-                host=default_node.host,
-                port=default_node.port,
-                timeout=self.config.get_request_timeout(),
-                max_workers=self.config.get_max_workers()
-            )
-            logger.info(f"Using HTTP client: {default_node.host}:{default_node.port}")
+        # Initialize direct client (embedded mode only)
+        self.client = EdgeLakeDirectClient(
+            max_workers=self.config.get_max_workers()
+        )
+        logger.debug("Using direct EdgeLake integration (embedded mode)")
 
         # Initialize builders and generators
         self.command_builder = CommandBuilder()
@@ -172,99 +162,6 @@ class EdgeLakeMCPServer:
                     type="text",
                     text=f"Error: {str(e)}"
                 )]
-        
-        @self.server.list_resources()
-        async def list_resources():
-            """List available resources (databases and tables)"""
-            logger.debug("Listing resources")
-
-            try:
-                resources = []
-
-                # Get all databases
-                databases = await self.client.get_databases()
-                logger.debug(f"Found {len(databases)} databases")
-                
-                # For each database, get its tables
-                for db_name in databases:
-                    # Add database-level resource
-                    resources.append({
-                        "uri": f"database://{db_name}",
-                        "name": f"Database: {db_name}",
-                        "description": f"All tables in database '{db_name}'",
-                        "mimeType": "application/json"
-                    })
-                    
-                    # Get tables
-                    tables = await self.client.get_tables(db_name)
-                    logger.debug(f"Database '{db_name}' has {len(tables)} tables")
-                    
-                    # Add table-level resources
-                    for table_name in tables:
-                        resources.append({
-                            "uri": f"database://{db_name}/{table_name}",
-                            "name": f"{db_name}.{table_name}",
-                            "description": f"Table '{table_name}' in database '{db_name}'",
-                            "mimeType": "application/json"
-                        })
-
-
-                logger.debug(f"Returning {len(resources)} resources")
-                return resources
-                
-            except Exception as e:
-                logger.error(f"Error listing resources: {e}", exc_info=True)
-                return []
-        
-        @self.server.read_resource()
-        async def read_resource(uri: str):
-            """Read a resource (table schema)"""
-            logger.debug(f"Reading resource: {uri}")
-
-            try:
-                # Parse URI
-                if not uri.startswith("database://"):
-                    raise ValueError(f"Invalid URI scheme: {uri}")
-                
-                path = uri[11:]  # Remove "database://"
-                parts = path.split("/")
-                
-                if len(parts) == 1:
-                    # Database-level resource - return list of tables
-                    db_name = parts[0]
-                    tables = await self.client.get_tables(db_name)
-                    content = f"Tables in database '{db_name}':\n"
-                    content += "\n".join(f"  - {t}" for t in tables)
-                    return content
-                
-                elif len(parts) == 2:
-                    # Table-level resource - return schema
-                    db_name, table_name = parts
-                    schema = await self.client.get_table_schema(db_name, table_name)
-                    return schema
-                
-                else:
-                    raise ValueError(f"Invalid resource URI format: {uri}")
-                    
-            except Exception as e:
-                logger.error(f"Error reading resource {uri}: {e}", exc_info=True)
-                return f"Error reading resource: {str(e)}"
-    
-    async def run_standalone(self):
-        """Run server in standalone mode using stdio transport"""
-        if not MCP_AVAILABLE:
-            raise RuntimeError("MCP library not available")
-
-        logger.info("Starting EdgeLake MCP Server in standalone mode")
-
-        from mcp.server.stdio import stdio_server
-
-        async with stdio_server() as (read_stream, write_stream):
-            await self.server.run(
-                read_stream,
-                write_stream,
-                self.server.create_initialization_options()
-            )
 
     async def run_sse_server(self, host: str = "0.0.0.0", port: int = None):
         """
@@ -339,25 +236,17 @@ class EdgeLakeMCPServer:
         Run server in embedded mode (within EdgeLake process).
 
         This method is called from a background thread started by member_cmd.py.
-        Chooses transport based on self.transport parameter:
-        - "stdio": Uses stdio transport (conflicts with EdgeLake CLI, not recommended)
-        - "sse": Uses SSE transport over HTTP (recommended for embedded mode)
+        Uses SSE transport over HTTP (only supported transport).
         """
         if not MCP_AVAILABLE:
             logger.error("MCP library not available")
             return
 
-        logger.info(f"Starting EdgeLake MCP Server in embedded mode (transport={self.transport})")
+        logger.info(f"Starting EdgeLake MCP Server in embedded mode with SSE transport")
 
         try:
-            if self.transport == "sse":
-                # Run SSE server - this is the recommended mode for embedded operation
-                asyncio.run(self.run_sse_server())
-            else:
-                # Run stdio server - will conflict with EdgeLake's CLI
-                logger.warning("Using stdio transport in embedded mode may conflict with EdgeLake CLI")
-                logger.warning("Recommend using transport='sse' instead")
-                asyncio.run(self.run_standalone())
+            # Run SSE server
+            asyncio.run(self.run_sse_server())
         except Exception as e:
             logger.error(f"Error in embedded MCP server: {e}", exc_info=True)
 
@@ -376,7 +265,7 @@ class EdgeLakeMCPServer:
 
         # Shutdown SSE server if running
         if hasattr(self, 'sse_server') and self.sse_server:
-            logger.info("Shutting down SSE server")
+            logger.debug("Shutting down SSE server")
             try:
                 self.sse_server.should_exit = True
             except Exception as e:
@@ -384,50 +273,3 @@ class EdgeLakeMCPServer:
 
         # Close client
         self.client.close()
-
-
-async def async_main():
-    """Async main entry point"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='EdgeLake MCP Server')
-    parser.add_argument('--mode', choices=['standalone', 'threaded'], 
-                       default='standalone',
-                       help='Server mode (default: standalone)')
-    parser.add_argument('--config-dir', type=str, default=None,
-                       help='Configuration directory path')
-    parser.add_argument('--version', action='version', 
-                       version=f'edgelake-mcp-server {__version__}')
-    
-    args = parser.parse_args()
-    
-    # Create and run server
-    server = EdgeLakeMCPServer(mode=args.mode, config_dir=args.config_dir)
-    
-    try:
-        if args.mode == 'standalone':
-            await server.run_standalone()
-        else:
-            server.run_threaded()
-    except KeyboardInterrupt:
-        logger.info("Server stopped by user")
-    except Exception as e:
-        logger.error(f"Server error: {e}", exc_info=True)
-        sys.exit(1)
-    finally:
-        server.close()
-
-
-def main():
-    """Synchronous entry point"""
-    try:
-        asyncio.run(async_main())
-    except KeyboardInterrupt:
-        logger.info("Server stopped by user")
-    except Exception as e:
-        logger.error(f"Server error: {e}", exc_info=True)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
