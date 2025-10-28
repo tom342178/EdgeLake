@@ -8576,9 +8576,8 @@ def _run_mcp_server(status, io_buff_in, cmd_words, trace):
     # Create and start MCP server
     try:
         mcp_server = EdgeLakeMCPServer(
-            mode='embedded',
             port=port,
-            transport=transport,  # Changed from 'mode' to 'transport'
+            transport=transport,
             enabled_tools=enabled_tools,
             capabilities=capabilities
         )
