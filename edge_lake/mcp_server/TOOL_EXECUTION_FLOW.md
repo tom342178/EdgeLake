@@ -2,7 +2,19 @@
 
 This document shows the execution flow for MCP tools from client to EdgeLake core.
 
-## Path 1: Standard Tools (list_databases, list_tables, get_schema, node_status, server_info)
+## Architecture Overview
+
+The MCP server implements **three distinct execution paths**:
+
+1. **Standard Tools** (list_databases, list_tables, get_schema, node_status, server_info)
+2. **Network SQL Queries** (distributed queries via `run client ()`)
+3. **Local SQL Queries** (direct database queries with validation + streaming)
+
+---
+
+## Path 1: Standard Tools
+
+Standard tools use command templates from `tools.yaml` and execute directly via `member_cmd.process_cmd()`.
 
 ```mermaid
 sequenceDiagram
@@ -14,7 +26,7 @@ sequenceDiagram
     participant DirectClient as EdgeLakeDirectClient<br/>(direct_client.py)
     participant MemberCmd as member_cmd.py<br/>(EdgeLake Core)
 
-    Client->>SSE: POST /messages/?session_id=xyz<br/>{"method": "tools/call", "params": {"name": "list_databases"}}
+    Client->>SSE: POST /messages/?session_id=xyz<br/>{method: "tools/call", params: {name: "list_databases"}}
     SSE->>Server: handle_call_tool(name, arguments)
     Server->>Executor: execute_tool(name, arguments)
 
@@ -39,7 +51,7 @@ sequenceDiagram
 
     Note over Executor: Apply response_parser if configured<br/>(JSONPath extraction)
 
-    Executor-->>Server: [{"type": "text", "text": result}]
+    Executor-->>Server: [{type: "text", text: result}]
     Server-->>SSE: JSON-RPC response
     SSE-->>Client: SSE message event
 ```
@@ -69,9 +81,9 @@ sequenceDiagram
 
 ---
 
-## Path 2: Query Tool (Distributed SQL Queries)
+## Path 2: Network SQL Queries (Distributed Queries)
 
-### Path 2A: Network Query (Distributed - Most Common)
+Network queries are distributed across operator nodes using `run client ()`. This path handles both pass-through and consolidation queries transparently.
 
 ```mermaid
 sequenceDiagram
@@ -82,8 +94,9 @@ sequenceDiagram
     participant QueryBuilder as QueryBuilder<br/>(query_builder.py)
     participant DirectClient as EdgeLakeDirectClient<br/>(direct_client.py)
     participant MemberCmd as member_cmd.py<br/>(EdgeLake Core)
+    participant JobInstance as JobInstance<br/>(job_instance.py)
 
-    Client->>SSE: POST /messages/?session_id=xyz<br/>{"method": "tools/call", "params": {"name": "query", ...}}
+    Client->>SSE: POST /messages/?session_id=xyz<br/>{method: "tools/call", params: {name: "query", database: "demo", table: "sensors"}}
     SSE->>Server: handle_call_tool("query", arguments)
     Server->>Executor: execute_tool("query", arguments)
 
@@ -92,32 +105,100 @@ sequenceDiagram
     Executor->>QueryBuilder: build_sql_query(arguments)
     QueryBuilder-->>Executor: "SELECT * FROM sensors LIMIT 100"
 
-    Note over Executor: Wrap with run client ()<br/>command = 'run client () sql {db} format=json "{sql}"'
+    Note over Executor: Wrap with run client ()<br/>command = 'run client () sql demo "SELECT * FROM sensors LIMIT 100"'
 
     Executor->>DirectClient: execute_command(command, headers)
 
-    Note over DirectClient: Create ProcessStat + io_buff<br/>Detect async command (run client)
-
     DirectClient->>MemberCmd: process_cmd(status, "run client () sql ...")
 
-    Note over MemberCmd: **EXECUTES: _run_client()**<br/>→ Distributes to operator nodes<br/>→ Aggregates results (MapReduce)<br/>→ Prints JSON to stdout
+    Note over MemberCmd: **EXECUTES: run_client()**<br/>→ Creates job_instance<br/>→ Distributes query to operator nodes<br/>→ Returns immediately (non-blocking)
 
     MemberCmd-->>DirectClient: return_code = 0
 
-    Note over DirectClient: **POLL FOR RESULTS**<br/>Async command detected<br/>Poll stdout with backoff (50ms→5s)<br/>Wait for '{"Query"' or '{"Statistics"'
+    Note over DirectClient: **WAIT FOR JOB COMPLETION**<br/>Poll job status:<br/>while not job_complete:<br/>  check status<br/>  sleep(poll_interval)
 
-    Note over DirectClient: **RETRIEVE RESULTS**<br/>Parse stdout_capture.getvalue()<br/>Return JSON string
+    loop Poll until complete
+        DirectClient->>MemberCmd: Check job status
+        MemberCmd->>JobInstance: is_active() / is_complete()
+        JobInstance-->>MemberCmd: status
+        MemberCmd-->>DirectClient: job status
+    end
 
-    DirectClient-->>Executor: '{"Query": [{...}, {...}]}'
+    Note over DirectClient: **Job completed!**
+
+    DirectClient->>MemberCmd: status.get_active_job_handle()
+    MemberCmd->>JobInstance: Get job handle
+    JobInstance-->>MemberCmd: j_handle
+    MemberCmd-->>DirectClient: j_handle
+
+    DirectClient->>JobInstance: j_handle.get_result_set()
+
+    Note over JobInstance: **Results accumulated in result_set**<br/>- Pass-through: Direct from operators<br/>- Consolidation: From consolidation table<br/>(Transparent to MCP)
+
+    JobInstance-->>DirectClient: result_set (JSON string)
+
+    DirectClient-->>Executor: '{\"Query\": [{...}, {...}]}'
 
     Note over Executor: Apply JSONPath: $.Query[*]<br/>Extract rows array
 
-    Executor-->>Server: [{"type": "text", "text": "[{...}, {...}]"}]
+    Executor-->>Server: [{type: "text", text: "[{...}, {...}]"}]
     Server-->>SSE: JSON-RPC response
     SSE-->>Client: SSE message event
 ```
 
-### Path 2B: Local Query - Batch Mode
+### Key Points - Network Queries:
+
+1. **Distributed Execution**: Uses `run client ()` wrapper
+   - Query distributed to multiple operator nodes
+   - Results consolidated on query node
+   - MapReduce-style parallel execution
+
+2. **Asynchronous Pattern**:
+   - `process_cmd()` returns immediately
+   - Creates `job_instance` to manage query
+   - MCP polls for completion
+   - Retrieves results from `j_handle.get_result_set()`
+
+3. **Pass-Through vs Consolidation** (Internal EdgeLake Optimization):
+   - **Pass-Through** (`is_pass_through() = True`):
+     - Simple queries (SELECT with WHERE, no aggregates)
+     - Results stream directly from operators → `result_set`
+     - No consolidation table created
+
+   - **Consolidation** (`is_pass_through() = False`):
+     - Aggregate queries (AVG, SUM, COUNT, GROUP BY, ORDER BY)
+     - Results → consolidation table (`query_N`) → `result_set`
+     - Query node performs final aggregation
+
+   - **Note**: Both use same MCP code path! The difference is handled internally by EdgeLake.
+
+4. **Result Retrieval**:
+   - NOT via stdout (doesn't work for distributed queries)
+   - NOT via `query_local_dbms()` call from MCP
+   - Via `j_handle.get_result_set()` after job completion
+
+5. **No Local Database Required**: Query node doesn't need database connection (operators have the data)
+
+### Network Query Tool Configuration:
+```yaml
+- name: query
+  description: "Execute distributed SQL query"
+  edgelake_command:
+    type: "sql"
+    method: "query"
+    build_sql: true
+    headers:
+      destination: "network"  # Routes to network path
+    response_parser:
+      type: "jsonpath"
+      extract_path: "$.Query[*]"
+```
+
+---
+
+## Path 3: Local SQL Queries (Direct Database Access)
+
+Local queries execute directly on the query node's database using low-level streaming APIs.
 
 ```mermaid
 sequenceDiagram
@@ -167,14 +248,14 @@ sequenceDiagram
 
     BatchExec->>DBInfo: close_cursor(status, cursor)
 
-    BatchExec-->>QueryExecutor: {"rows": [...], "total_rows": N}
+    BatchExec-->>QueryExecutor: {rows: [...], total_rows: N}
 
-    QueryExecutor-->>Executor: {"rows": [...], "total_rows": N}
+    QueryExecutor-->>Executor: {rows: [...], total_rows: N}
 
     Note over Executor: Extract rows, apply JSONPath
 ```
 
-### Path 2C: Local Query - Streaming Mode (Future)
+### Streaming Mode (Future Enhancement)
 
 ```mermaid
 sequenceDiagram
@@ -200,70 +281,55 @@ sequenceDiagram
 
         Note over StreamExec: **YIELD BATCH**<br/>Parse JSON, yield immediately<br/>Don't wait for all rows
 
-        StreamExec-->>QueryExecutor: yield {"type": "data", "rows": [...], "row_count": 100}
+        StreamExec-->>QueryExecutor: yield {type: "data", rows: [...], row_count: 100}
 
         Note over StreamExec: If get_next=False, break loop
     end
 
     StreamExec->>DBInfo: close_cursor(status, cursor)
 
-    StreamExec-->>QueryExecutor: yield {"type": "complete", "total_rows": N}
+    StreamExec-->>QueryExecutor: yield {type: "complete", total_rows: N}
 
     Note over QueryExecutor: **Stream to client**<br/>Each batch sent as received<br/>Memory efficient for large results
 ```
 
-### Key Points - Query Tool:
+### Key Points - Local Queries:
 
-1. **Dual Path**:
-   - **Network Queries**: `destination: network` → Standard command path with `run client ()`
-   - **Local Queries**: No network destination → QueryExecutor for validation + streaming
-
-2. **Network Query Flow** (Most Common):
-   - Uses `run client ()` wrapper for distributed execution
-   - No local database connectivity required
-   - Results consolidated by EdgeLake's query node
-   - Supports MapReduce-style aggregation
-
-3. **Local Query Flow** (Rare):
-   - Validates SQL via `select_parser()` first
+1. **Direct Database Access**:
+   - Queries execute on query node's local database
    - Requires local database connection
-   - Used for single-node queries only
+   - Uses low-level `db_info` APIs for streaming
 
-4. **SQL Building**: `QueryBuilder` constructs SQL from:
-   - `select`: Column list
-   - `where`: Filter conditions
-   - `group_by`: Grouping columns
-   - `order_by`: Sorting
-   - `limit`: Row limit
+2. **Validation First**:
+   - Always validates via `select_parser()`
+   - Ensures SQL correctness before execution
+   - Applies necessary transformations
 
-### Query Tool Configuration:
-```yaml
-- name: query
-  description: "Execute distributed SQL query"
-  edgelake_command:
-    type: "sql"
-    method: "query"
-    build_sql: true
-    headers:
-      destination: "network"  # Routes to network
-    response_parser:
-      type: "jsonpath"
-      extract_path: "$.Query[*]"
-```
+3. **Two Execution Modes**:
+   - **Batch Mode** (current): Accumulates all rows before returning
+   - **Streaming Mode** (future): Yields rows as fetched (memory efficient)
+
+4. **When Used**:
+   - Queries on local databases only
+   - Not distributed across network
+   - Direct database access required
 
 ---
 
-## Comparison: Standard Tools vs Query Tool
+## Comparison: Three Execution Paths
 
-| Aspect | Standard Tools | Query Tool |
-|--------|---------------|------------|
-| **Execution Path** | Always `_execute_edgelake_command()` | Checks `destination: network` |
-| **Command Building** | `CommandBuilder` (template fill) | `QueryBuilder` (SQL construction) |
-| **EdgeLake Command** | Direct (e.g., `blockchain get table`) | Wrapped with `run client ()` for network |
-| **Validation** | None (EdgeLake handles) | Optional via `select_parser()` (local only) |
-| **Database Required** | No | No (for network), Yes (for local) |
-| **Response Format** | Varies by command | Always `{"Query": [...]}` |
-| **JSONPath Parsing** | Tool-specific paths | `$.Query[*]` extraction |
+| Aspect | Standard Tools | Network SQL Queries | Local SQL Queries |
+|--------|---------------|---------------------|-------------------|
+| **Execution Path** | `_execute_edgelake_command()` | `_execute_edgelake_command()` | `_execute_sql_query()` |
+| **Command Building** | `CommandBuilder` (template) | `QueryBuilder` (SQL) | `QueryBuilder` (SQL) |
+| **EdgeLake Command** | Direct (e.g., `blockchain get`) | Wrapped: `run client () sql ...` | N/A (direct db_info calls) |
+| **Validation** | None (EdgeLake handles) | None (EdgeLake handles) | Via `select_parser()` |
+| **Database Required** | No | No (operators have data) | Yes (local database) |
+| **Execution Model** | Synchronous | Asynchronous (job_instance) | Synchronous |
+| **Result Retrieval** | io_buff OR stdout | `j_handle.get_result_set()` | `process_fetch_rows()` |
+| **Response Format** | Varies by command | `{"Query": [...]}` | `{"Query": [...]}` |
+| **JSONPath Parsing** | Tool-specific paths | `$.Query[*]` | `$.Query[*]` |
+| **Distributed** | N/A | Yes (multi-node) | No (single node) |
 
 ---
 
@@ -271,7 +337,7 @@ sequenceDiagram
 
 ### member_cmd.py - Main Entry Point
 
-All paths call this function:
+Standard tools and network queries call this function:
 
 ```python
 # edge_lake/cmd/member_cmd.py
@@ -296,7 +362,7 @@ def process_cmd(status: ProcessStat,
     Flow:
         1. Parse command string
         2. Look up command in commands dict
-        3. Execute command function (e.g., _blockchain_get, _run_client)
+        3. Execute command function (e.g., _blockchain_get, run_client)
         4. Populate io_buffer_in OR print to stdout
         5. Return status code
     """
@@ -306,6 +372,7 @@ def process_cmd(status: ProcessStat,
 ```python
 # After process_cmd() returns:
 
+# For standard tools (synchronous):
 # 1. Check stdout (for print commands like blockchain get)
 stdout_output = stdout_capture.getvalue()
 
@@ -316,6 +383,20 @@ io_buff_output = io_buff.decode('utf-8').rstrip('\x00')
 result = stdout_output if stdout_output.strip() else io_buff_output
 ```
 
+```python
+# For network queries (asynchronous):
+# 1. Wait for job completion
+while not job_complete:
+    # Poll job status
+    time.sleep(poll_interval)
+
+# 2. Get job handle
+j_handle = status.get_active_job_handle()
+
+# 3. Get accumulated results
+result_set = j_handle.get_result_set()  # JSON string
+```
+
 ### Commands Called by MCP Tools:
 
 | MCP Tool | EdgeLake Command | Function Called in member_cmd.py | Output Method |
@@ -324,9 +405,8 @@ result = stdout_output if stdout_output.strip() else io_buff_output
 | `list_tables` | `blockchain get table bring.json` | `_blockchain_get()` | stdout |
 | `get_schema` | `get columns where ...` | `_get_columns()` | io_buff |
 | `node_status` | `get status` | `_get_status()` | io_buff |
-| `query` (network) | `run client () sql ...` | `_run_client()` | stdout (async) |
-| `query` (local batch) | n/a - uses db_info directly | n/a | n/a |
-| `query` (local stream) | n/a - uses db_info directly | n/a | n/a |
+| `query` (network) | `run client () sql ...` | `run_client()` | `j_handle.get_result_set()` |
+| `query` (local) | n/a - uses db_info directly | n/a | `process_fetch_rows()` |
 
 ### db_info module - Query Execution (Local Queries Only)
 
@@ -399,7 +479,69 @@ def close_cursor(status: ProcessStat,
     """
 ```
 
-### Key Difference: Batch vs Streaming
+### job_instance.py - Distributed Query Management (Network Queries Only)
+
+For network queries, `run_client()` creates a job_instance:
+
+```python
+# edge_lake/job/job_instance.py
+
+class JobInstance:
+    """
+    Manages distributed query execution.
+
+    Key responsibilities:
+    - Track query state across operator nodes
+    - Accumulate results from multiple operators
+    - Handle pass-through vs consolidation internally
+    """
+
+    def is_active(self) -> bool:
+        """Check if job is still running."""
+
+    def is_complete(self) -> bool:
+        """Check if job has completed."""
+
+    def is_pass_through(self) -> bool:
+        """
+        Determine if query uses pass-through optimization.
+
+        Pass-through = True:
+          - Simple SELECT queries
+          - No aggregates, GROUP BY, ORDER BY
+          - Results stream directly from operators
+
+        Pass-through = False:
+          - Aggregate functions (AVG, SUM, COUNT)
+          - GROUP BY, ORDER BY clauses
+          - Results go to consolidation table first
+        """
+```
+
+```python
+# edge_lake/job/job_handle.py
+
+class JobHandle:
+    """
+    Handle for accessing job results.
+    """
+
+    def get_result_set(self) -> str:
+        """
+        Get accumulated query results.
+
+        Returns:
+            JSON string with results
+
+        Note:
+            This method works for both pass-through and
+            consolidation queries. The difference is handled
+            internally by EdgeLake.
+        """
+        return self.result_set
+```
+
+### Key Difference: Batch vs Streaming (Local Queries)
 
 **Batch Mode (Current):**
 ```python
@@ -448,6 +590,7 @@ yield {"type": "complete", "total_rows": total_count}
 ✅ **Direct integration** - No HTTP overhead in embedded mode
 ✅ **Configuration-driven parsing** - JSONPath defined in tools.yaml
 ✅ **Single source of truth** - EdgeLake's member_cmd.py
+✅ **Two query paths** - Network (distributed) vs Local (direct)
 
 ---
 
@@ -460,3 +603,5 @@ yield {"type": "complete", "total_rows": total_count}
 - **Query Executor**: `edge_lake/mcp_server/core/query_executor.py`
 - **Direct Client**: `edge_lake/mcp_server/core/direct_client.py`
 - **EdgeLake Core**: `edge_lake/cmd/member_cmd.py`
+- **Job Management**: `edge_lake/job/job_instance.py`, `edge_lake/job/job_handle.py`
+- **Database API**: `edge_lake/dbms/db_info.py`
