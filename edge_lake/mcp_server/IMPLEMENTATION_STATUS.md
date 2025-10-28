@@ -61,10 +61,10 @@ All core components have been successfully implemented!
   - Environment variable support
   - Executable permissions
 
-- **`start_threaded.py`** - Python module for threaded mode with:
-  - Background thread management
-  - Integration helper function
-  - Command-line interface
+- **`process_registry.py`** - Process registry integration module:
+  - Status functions for 'get processes' command
+  - Global references to server instance and thread
+  - No standalone launcher (server started via member_cmd.py)
 
 ### 6. Dependencies ✅
 - **`requirements.txt`** - Complete dependency list:

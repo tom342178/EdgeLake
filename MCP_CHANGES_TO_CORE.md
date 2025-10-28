@@ -73,7 +73,7 @@ exit mcp server
 Added registration with EdgeLake's `add_service()` to make MCP server visible in `get processes`:
 
 ```python
-from edge_lake.mcp_server.start_threaded import is_running, get_info
+from edge_lake.mcp_server.process_registry import is_running, get_info
 add_service("mcp-server", ("MCP Server", is_running, get_info))
 ```
 

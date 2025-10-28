@@ -8602,14 +8602,14 @@ def _run_mcp_server(status, io_buff_in, cmd_words, trace):
 
         # Register with EdgeLake process registry for 'get processes'
         try:
-            from edge_lake.mcp_server.start_threaded import is_running, get_info
+            from edge_lake.mcp_server.process_registry import is_running, get_info
             # Store references in commands dict so get_info can access them
             commands["run mcp server"]['_is_running'] = is_running
             commands["run mcp server"]['_get_info'] = get_info
             # Update global instance reference for status queries
-            from edge_lake.mcp_server import start_threaded
-            start_threaded._mcp_server_instance = mcp_server
-            start_threaded._mcp_thread = mcp_thread
+            from edge_lake.mcp_server import process_registry
+            process_registry._mcp_server_instance = mcp_server
+            process_registry._mcp_thread = mcp_thread
             # Register service
             add_service("mcp-server", ("MCP Server", is_running, get_info))
         except Exception as e:
