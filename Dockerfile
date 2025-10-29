@@ -45,8 +45,8 @@ RUN python3 -m pip install --upgrade -r /tmp/edgelake-requirements.txt
 # LAYER 3: External dependencies (only rebuilds when repo changes)
 # ============================================================================
 # Clone deployment-scripts from your public fork (includes MCP autostart integration)
-ARG CACHEBUST=1
-RUN git clone https://github.com/tom342178/deployment-scripts.git
+ARG CACHEBUST=f8e7d2c1
+RUN echo "Cache bust: $CACHEBUST" && git clone https://github.com/tom342178/deployment-scripts.git
 
 # Alternative: Use upstream EdgeLake deployment-scripts (without MCP autostart)
 # RUN git clone https://github.com/EdgeLake/deployment-scripts

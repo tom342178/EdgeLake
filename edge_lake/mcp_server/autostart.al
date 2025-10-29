@@ -23,23 +23,24 @@
 #-----------------------------------------------------------------------------------------------------------------------
 
 # Check if MCP is enabled via environment variable
+echo "MCP autostart: Starting autostart.al script"
+
 on error ignore
-mcp_enabled_str = python !MCP_ENABLED
+if $MCP_ENABLED then set mcp_enabled_str = $MCP_ENABLED
+else set mcp_enabled_str = false
 on error goto
 
-# Default to false if not set
-if !mcp_enabled_str == "" then
-    mcp_enabled_str = false
-end
+# Debug output
+echo "MCP autostart: mcp_enabled_str = !mcp_enabled_str"
 
 # Only proceed if MCP is enabled (check string values since environment variables are strings)
 if !mcp_enabled_str == "true" or !mcp_enabled_str == "True" or !mcp_enabled_str == "TRUE" then
     # Get configuration from environment variables with defaults
     on error ignore
-    mcp_port = python !MCP_PORT
-    mcp_transport = python !MCP_TRANSPORT
-    mcp_tools = python !MCP_TOOLS
-    mcp_host = python !MCP_HOST
+    if $MCP_PORT then set mcp_port = $MCP_PORT
+    if $MCP_TRANSPORT then set mcp_transport = $MCP_TRANSPORT
+    if $MCP_TOOLS then set mcp_tools = $MCP_TOOLS
+    if $MCP_HOST then set mcp_host = $MCP_HOST
     on error goto
 
     # Set defaults if not provided

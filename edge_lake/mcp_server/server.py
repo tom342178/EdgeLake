@@ -114,7 +114,7 @@ class EdgeLakeMCPServer:
 
         # Log initialization
         tool_count = len(enabled_tools) if enabled_tools else 'all'
-        logger.info(f"EdgeLake MCP Server initialized (mode={mode}, version={__version__})")
+        logger.info(f"EdgeLake MCP Server initialized (transport={transport}, version={__version__})")
         logger.info(f"Transport: {transport}, Tools: {tool_count}")
     
     def _register_handlers(self):
