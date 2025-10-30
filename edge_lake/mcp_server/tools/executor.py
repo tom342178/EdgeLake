@@ -46,14 +46,17 @@ class ToolExecutor:
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Execute a tool by name with given arguments.
-        
+
         Args:
             name: Tool name
             arguments: Tool arguments
-        
+
         Returns:
             List of TextContent dicts for MCP response
         """
+        # Store current tool name for debugging/logging
+        self._current_tool = name
+
         # Testing mode: log tool entry and inputs
         if self.config.testing_mode:
             logger.info(f"[TESTING] Tool '{name}' called")
@@ -315,7 +318,14 @@ class ToolExecutor:
             try:
                 result = json.loads(result)
             except (json.JSONDecodeError, TypeError) as e:
-                logger.warning(f"Failed to parse result as JSON: {e}")
+                # Keep at WARNING - this is a failure we need to see and fix
+                result_preview = result[:100] if result else "(empty string)"
+                tool_name = getattr(self, '_current_tool', 'unknown')
+                logger.warning(
+                    f"Failed to parse result as JSON for tool '{tool_name}': {e}\n"
+                    f"  Input arguments: {arguments}\n"
+                    f"  Result preview: {result_preview}"
+                )
                 return result
 
         # Get JSONPath expression from config
