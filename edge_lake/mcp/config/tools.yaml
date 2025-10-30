@@ -18,8 +18,8 @@ version: "1.0"
 
 tools:
   # Database Discovery Tools
-  - name: list_databases
-    description: "List all available databases in EdgeLake. Use this to discover what databases are available before querying."
+  - name: list_database_schema
+    description: "List all databases and tables in EdgeLake. Returns a list of all database/table combinations available in the network. Use this to discover what data is available before querying."
     edgelake_command:
       type: "get"
       method: "blockchain_table"
@@ -28,20 +28,6 @@ tools:
       type: object
       properties: {}
       required: []
-
-  - name: list_tables
-    description: "List all tables in a specific database. Use this to discover what tables are available in a database before querying."
-    edgelake_command:
-      type: "get"
-      method: "blockchain_table"
-      template: "blockchain get table where format = mcp and dbms = {database}"
-    input_schema:
-      type: object
-      properties:
-        database:
-          type: string
-          description: "Database name to list tables from"
-      required: ["database"]
   
   - name: get_schema
     description: "Get the schema (column definitions) for a specific table. Use this to understand what columns are available before querying."
@@ -67,7 +53,7 @@ tools:
       type: "sql"
       method: "query"
       build_sql: true
-      format: "mcp"  # Use MCP format for clean JSON output
+      format: "json"  # SQL queries use format=json (not mcp)
       headers:
         destination: "network"
     input_schema:

@@ -132,7 +132,8 @@ format_values = {
                     "json:output" : 0,      # Output as JSON rows
                     "json:list" : 0,        # Output as a JSON list
                     "table" : 0,            # Output as a table
-                    "mcp" : 0,              # Output in MCP format (clean JSON, no CLI noise)
+                    # Note: format=mcp is NOT supported for SQL queries
+                    # Use format=mcp only for metadata commands (blockchain get, get version, etc.)
 }
 dest_values = {
                     "stdout" : 0,             # Output to stdout
@@ -1606,19 +1607,31 @@ def blockchain_get(status, cmd_words, blockchain_file, return_data):
 
     if words_count > offset:
         if cmd_words[offset] == "where":
-            ret_val, offset, value_pairs = utils_json.make_jon_struct_from_where(cmd_words, offset + 1)
-
-            # Check for format=mcp in the where clause
-            if offset < words_count and utils_data.test_words(cmd_words, offset, ["format", "="]):
-                if cmd_words[offset + 2] == "mcp":
+            # Check for format= directive BEFORE parsing where clause
+            # Format directives are not data filters, so extract and skip them
+            where_start = offset + 1
+            if where_start + 2 < words_count and utils_data.test_words(cmd_words, where_start, ["format", "="]):
+                format_value = cmd_words[where_start + 2]
+                if format_value == "mcp":
                     mcp_format = True
-                    offset += 3
-                    # Check for additional filter parameters (e.g., dbms=xxx for filtering tables)
-                    if offset < words_count and cmd_words[offset] == "and":
-                        offset += 1
-                        if offset + 2 < words_count and utils_data.test_words(cmd_words, offset, ["dbms", "="]):
-                            mcp_filter_dbms = params.get_value_if_available(cmd_words[offset + 2])
-                            offset += 3
+                # Skip the format directive regardless of value (json, mcp, etc.)
+                where_start += 3
+
+                # Check for additional filter parameters after format
+                if where_start < words_count and cmd_words[where_start] == "and":
+                    where_start += 1
+                    if where_start + 2 < words_count and utils_data.test_words(cmd_words, where_start, ["dbms", "="]):
+                        mcp_filter_dbms = params.get_value_if_available(cmd_words[where_start + 2])
+                        where_start += 3
+
+            # Now parse the remaining where conditions (if any)
+            if where_start < words_count and cmd_words[where_start] not in ["bring", "bring."]:
+                ret_val, offset, value_pairs = utils_json.make_jon_struct_from_where(cmd_words, where_start)
+            else:
+                # No additional where conditions, just format
+                ret_val = process_status.SUCCESS
+                offset = where_start
+                value_pairs = None
 
             if ret_val:
                 # No key values pairs - take the where condition as a string
@@ -1680,6 +1693,26 @@ def blockchain_get(status, cmd_words, blockchain_file, return_data):
             if json_str:
                 output_str = set_json_as_table(json_str, bring_type, sort_fields)
 
+        # Handle MCP format extraction (before REST/CLI split)
+        if mcp_format and blockchain_out:
+            if key == "table" or key == "schema":
+                # Extract all database/table combinations for MCP schema discovery
+                # Note: "schema" is an alias for this operation - both work the same
+                tables_list = []
+                for policy in blockchain_out:
+                    if isinstance(policy, dict) and "table" in policy:
+                        table_info = policy["table"]
+                        if "dbms" in table_info and "name" in table_info:
+                            tables_list.append({
+                                "database": table_info["dbms"],
+                                "table": table_info["name"]
+                            })
+                # Sort by database, then table name
+                tables_list.sort(key=lambda x: (x["database"], x["table"]))
+                output_str = utils_json.to_string(tables_list)
+                # Override blockchain_out with the extracted list for consistent handling
+                blockchain_out = utils_json.str_to_json(output_str)
+
     if not return_data:
         rest_reply = False
         if not ret_val:
@@ -1705,29 +1738,6 @@ def blockchain_get(status, cmd_words, blockchain_file, return_data):
                 if blockchain_out:
                     if not with_bring:
                         output_str = utils_json.to_string(blockchain_out)  # change to a string
-
-                    # Handle MCP format extraction
-                    if mcp_format and blockchain_out:
-                        if key == "table":
-                            # Extract database names or table info from table policies
-                            if mcp_filter_dbms:
-                                # Extract table names for a specific database
-                                tables = []
-                                for policy in blockchain_out:
-                                    if isinstance(policy, dict) and "table" in policy:
-                                        table_info = policy["table"]
-                                        if table_info.get("dbms") == mcp_filter_dbms and "name" in table_info:
-                                            tables.append(table_info["name"])
-                                output_str = utils_json.to_string(sorted(set(tables)))
-                            else:
-                                # Extract unique database names
-                                databases = []
-                                for policy in blockchain_out:
-                                    if isinstance(policy, dict) and "table" in policy:
-                                        table_info = policy["table"]
-                                        if "dbms" in table_info:
-                                            databases.append(table_info["dbms"])
-                                output_str = utils_json.to_string(sorted(set(databases)))
 
                 if not output_str:
                     output_str = "[]"       # Return empty list
@@ -17239,11 +17249,18 @@ def get_version(status, io_buff_in, cmd_words, trace):
 
     code_version = node_info.get_version(status)
 
-    offset = get_command_offset(cmd_words)
-    words_count = len(cmd_words)
+    # Handle case where cmd_words is None (called during initialization)
+    if cmd_words is None:
+        offset = 0
+        words_count = 0
+    else:
+        offset = get_command_offset(cmd_words)
+        words_count = len(cmd_words)
 
     # Check for format specification
-    if words_count >= (offset + 5) and utils_data.test_words(cmd_words, offset + 2, ["where", "format", "="]):
+    # Command structure: get version where format = mcp
+    # Positions:         0   1       2     3      4 5
+    if words_count >= (offset + 6) and utils_data.test_words(cmd_words, offset + 2, ["where", "format", "="]):
         reply_format = cmd_words[offset + 5]
     else:
         reply_format = None
@@ -19901,10 +19918,12 @@ _get_methods = {
 
         "version": {'command': get_version,
                  'key_only': True,
+                 'with_format': True,
                  'help': {
-                     'usage': "get version",
-                     'example': "get version",
-                     'text': "Return the code version.",
+                     'usage': "get version [where format = mcp]",
+                     'example': "get version\n"
+                                "get version where format = mcp",
+                     'text': "Return the code version. Use format=mcp for structured JSON output.",
                      'keywords' : ["node info"],
                     }
                  },
