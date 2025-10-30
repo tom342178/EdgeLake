@@ -1,4 +1,4 @@
-# ==== Part 1: Build executable ====
+# ==== Part 1: Build stage ====
 FROM python:3.11-slim AS builder
 
 WORKDIR /app/
@@ -6,50 +6,43 @@ WORKDIR /app/
 # Copy source code
 COPY . EdgeLake/
 
-# Install build dependencies
+# Install dependencies (skip compilation - use Python source for MCP compatibility)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends bash git openssh-client gcc python3-dev libffi-dev libopencv-dev && \
-    python3 -m pip install --upgrade pip wheel pyyaml==6.0.2 && \
+    apt-get install -y --no-install-recommends bash git openssh-client gcc python3-dev libffi-dev && \
+    python3 -m pip install --upgrade pip wheel && \
     python3 -m pip install --upgrade -r /app/EdgeLake/requirements.txt && \
-    python3 /app/EdgeLake/setup.py install && \
-    mv dist/* /app/edgelake_agent && \
-    rm -rf EdgeLake build *.egg-info dist && \
-    apt-get purge -y gcc python3-dev libffi-dev libopencv-dev && \
+    apt-get purge -y gcc python3-dev libffi-dev && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-# ==== Part 2: Prepare runtime ====
+# ==== Part 2: Runtime stage ====
 FROM python:3.11-slim AS runtime
 
 WORKDIR /app/
 
-# Copy only the executable from builder
-COPY --from=builder /app/edgelake_agent /app/edgelake_agent
+# Copy Python source and dependencies from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /app/EdgeLake /app/EdgeLake
 
-# Install runtime dependencies only
+# Install runtime dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        bash ca-certificates python3-pip git && \
-    python3 -m pip install --no-cache-dir --upgrade \
-        pip \
-        grpcio-tools==1.70.0 \
-        pyyaml==6.0.2 \
-        requests==2.32.4 && \
+        bash ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy only scripts/configs needed at runtime
-RUN mkdir -p /app/EdgeLake && \
-    git clone https://github.com/oshadmon/nebula-anylog /app/nebula
-COPY deploy_edgelake.sh /app/deploy_edgelake.sh
-COPY setup.cfg /app/EdgeLake/setup.
+# Copy deployment scripts and configs
+RUN git clone https://github.com/oshadmon/nebula-anylog /app/nebula
+
+# Copy setup.cfg
+COPY setup.cfg /app/EdgeLake/setup.cfg
 
 # ==== Part 3: Runtime configuration ====
-ENV EDGELAKE_PATH=/app \
+ENV PYTHONPATH=/app/EdgeLake \
+    EDGELAKE_PATH=/app \
     EDGELAKE_HOME=/app/EdgeLake \
-    APP_NAME=edgelake_agent \
     BLOCKCHAIN_DIR=/app/EdgeLake/blockchain \
     DATA_DIR=/app/EdgeLake/data \
-    TEST_DIR=/app/deployment-scripts/tests \
     DEBIAN_FRONTEND=noninteractive \
     NODE_TYPE=generic \
     NODE_NAME=edgelake-node \
@@ -57,7 +50,22 @@ ENV EDGELAKE_PATH=/app \
     ANYLOG_SERVER_PORT=32548 \
     ANYLOG_REST_PORT=32549 \
     ANYLOG_MCP_PORT=50051 \
-    LEDGER_CONN=127.0.0.1:32049
+    LEDGER_CONN=127.0.0.1:32049 \
+    INIT_TYPE=prod
 
-RUN chmod +x /app/deploy_edgelake.sh
-ENTRYPOINT ["/app/deploy_edgelake.sh"]
+# Create startup wrapper script for Python-based deployment
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+# Clone deployment-scripts if not present\n\
+if [[ ! -d $EDGELAKE_PATH/deployment-scripts || ! "$(ls -A $EDGELAKE_PATH/deployment-scripts)" ]] ; then\n\
+  git clone https://github.com/EdgeLake/deployment-scripts $EDGELAKE_PATH/deployment-scripts\n\
+fi\n\
+\n\
+# Run EdgeLake with main.al initialization script\n\
+cd $EDGELAKE_HOME\n\
+exec python3 edge_lake/edgelake.py process $EDGELAKE_PATH/deployment-scripts/node-deployment/main.al\n\
+' > /app/start_edgelake.sh && chmod +x /app/start_edgelake.sh
+
+WORKDIR /app/EdgeLake
+ENTRYPOINT ["/app/start_edgelake.sh"]
