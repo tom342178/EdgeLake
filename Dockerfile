@@ -42,7 +42,7 @@ COPY setup.cfg /app/EdgeLake/setup.cfg
 
 # ==== Part 3: Runtime configuration ====
 # Pass build arg to runtime env
-ARG DEPLOYMENT_SCRIPTS_REPO
+ARG DEPLOYMENT_SCRIPTS_REPO=https://github.com/tom342178/deployment-scripts
 
 ENV PYTHONPATH=/app/EdgeLake \
     EDGELAKE_PATH=/app \
