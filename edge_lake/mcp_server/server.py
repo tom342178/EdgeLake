@@ -31,6 +31,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger('edgelake-mcp-server')
 
+# Suppress verbose MCP library logs (set to WARNING to hide INFO messages)
+logging.getLogger('mcp.server.lowlevel.server').setLevel(logging.WARNING)
+
 # Import MCP types
 try:
     from mcp.server import Server
