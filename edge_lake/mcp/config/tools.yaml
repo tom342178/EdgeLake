@@ -23,14 +23,7 @@ tools:
     edgelake_command:
       type: "get"
       method: "blockchain_table"
-      template: "blockchain get table bring.json"
-      # Response extraction using JSONPath
-      response_parser:
-        type: "jsonpath"
-        description: "Extract unique database names from blockchain table response"
-        extract_path: "$[*].table.dbms"
-        unique: true
-        sort: true
+      template: "blockchain get table where format = mcp"
     input_schema:
       type: object
       properties: {}
@@ -41,18 +34,7 @@ tools:
     edgelake_command:
       type: "get"
       method: "blockchain_table"
-      template: "blockchain get table bring.json"
-      # Response extraction using JSONPath
-      response_parser:
-        type: "jsonpath"
-        description: "Extract table names for a specific database from blockchain table response"
-        extract_path: "$[*].table"
-        # Filter by dbms field matching 'database' argument, then extract 'name' field
-        filter:
-          field: "dbms"
-          source: "argument"
-          argument: "database"
-        map: "name"
+      template: "blockchain get table where format = mcp and dbms = {database}"
     input_schema:
       type: object
       properties:
@@ -66,7 +48,7 @@ tools:
     edgelake_command:
       type: "get"
       method: "columns"
-      template: 'get columns where dbms="{database}" and table="{table}" and format=json'
+      template: 'get columns where dbms="{database}" and table="{table}" and format=mcp'
     input_schema:
       type: object
       properties:
@@ -85,13 +67,9 @@ tools:
       type: "sql"
       method: "query"
       build_sql: true
+      format: "mcp"  # Use MCP format for clean JSON output
       headers:
         destination: "network"
-      # Response extraction using JSONPath
-      response_parser:
-        type: "jsonpath"
-        description: "Extract query results array from EdgeLake response"
-        extract_path: "$.Query[*]"
     input_schema:
       type: object
       properties:
@@ -137,11 +115,11 @@ tools:
 
   # Node Status Tool
   - name: node_status
-    description: "Get the status and health information of the EdgeLake node"
+    description: "Get the status and health information of the EdgeLake node including detailed statistics"
     edgelake_command:
       type: "get"
       method: "status"
-      template: "get status"
+      template: "get status where format = mcp include statistics"
     input_schema:
       type: object
       properties: {}
@@ -149,10 +127,11 @@ tools:
   
   # Server Info Tool
   - name: server_info
-    description: "Get EdgeLake MCP Server version and configuration information"
+    description: "Get EdgeLake version and node information"
     edgelake_command:
-      type: "internal"
-      method: "server_info"
+      type: "get"
+      method: "version"
+      template: "get version where format = mcp"
     input_schema:
       type: object
       properties: {}

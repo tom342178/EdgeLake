@@ -132,6 +132,7 @@ format_values = {
                     "json:output" : 0,      # Output as JSON rows
                     "json:list" : 0,        # Output as a JSON list
                     "table" : 0,            # Output as a table
+                    "mcp" : 0,              # Output in MCP format (clean JSON, no CLI noise)
 }
 dest_values = {
                     "stdout" : 0,             # Output to stdout
@@ -1600,9 +1601,25 @@ def blockchain_get(status, cmd_words, blockchain_file, return_data):
     value_pairs = None
     where_cond = ""
     json_str = ""
+    mcp_format = False
+    mcp_filter_dbms = None  # For filtering tables by database name
+
     if words_count > offset:
         if cmd_words[offset] == "where":
             ret_val, offset, value_pairs = utils_json.make_jon_struct_from_where(cmd_words, offset + 1)
+
+            # Check for format=mcp in the where clause
+            if offset < words_count and utils_data.test_words(cmd_words, offset, ["format", "="]):
+                if cmd_words[offset + 2] == "mcp":
+                    mcp_format = True
+                    offset += 3
+                    # Check for additional filter parameters (e.g., dbms=xxx for filtering tables)
+                    if offset < words_count and cmd_words[offset] == "and":
+                        offset += 1
+                        if offset + 2 < words_count and utils_data.test_words(cmd_words, offset, ["dbms", "="]):
+                            mcp_filter_dbms = params.get_value_if_available(cmd_words[offset + 2])
+                            offset += 3
+
             if ret_val:
                 # No key values pairs - take the where condition as a string
                 with_bring = False
@@ -1688,6 +1705,30 @@ def blockchain_get(status, cmd_words, blockchain_file, return_data):
                 if blockchain_out:
                     if not with_bring:
                         output_str = utils_json.to_string(blockchain_out)  # change to a string
+
+                    # Handle MCP format extraction
+                    if mcp_format and blockchain_out:
+                        if key == "table":
+                            # Extract database names or table info from table policies
+                            if mcp_filter_dbms:
+                                # Extract table names for a specific database
+                                tables = []
+                                for policy in blockchain_out:
+                                    if isinstance(policy, dict) and "table" in policy:
+                                        table_info = policy["table"]
+                                        if table_info.get("dbms") == mcp_filter_dbms and "name" in table_info:
+                                            tables.append(table_info["name"])
+                                output_str = utils_json.to_string(sorted(set(tables)))
+                            else:
+                                # Extract unique database names
+                                databases = []
+                                for policy in blockchain_out:
+                                    if isinstance(policy, dict) and "table" in policy:
+                                        table_info = policy["table"]
+                                        if "dbms" in table_info:
+                                            databases.append(table_info["dbms"])
+                                output_str = utils_json.to_string(sorted(set(databases)))
+
                 if not output_str:
                     output_str = "[]"       # Return empty list
                 status.get_active_job_handle().set_result_set(output_str)
@@ -15447,7 +15488,20 @@ def get_node_status(status, io_buff_in, cmd_words, trace):
                             for stat_key, stat_value in statistics_.items():
                                 reply_struct[stat_key] = stat_value
 
-        reply = utils_json.to_string(reply_struct)
+        if reply_format == "mcp":
+            # MCP format: clean structure with node information
+            mcp_struct = {
+                "node_name": node_info.get_node_name(),
+                "status": "running",
+                "profiling": profiler.is_active()
+            }
+            # Add any additional included variables
+            for key, value in reply_struct.items():
+                if key != "Status":
+                    mcp_struct[key] = value
+            reply = utils_json.to_string(mcp_struct)
+        else:
+            reply = utils_json.to_string(reply_struct)
 
     return [ret_val, reply, reply_format]
 # ------------------------------------------
@@ -16210,6 +16264,13 @@ def get_columns(status, io_buff_in, cmd_words, trace):
                     output_list = []
                     for entry in new_list:
                         output_list.append({"column" : entry[0]})
+                    reply = utils_json.to_string(output_list)
+
+                elif out_format == "mcp":
+                    # MCP format: list of objects with name and type
+                    output_list = []
+                    for entry in new_list:
+                        output_list.append({"name": entry[0], "type": entry[1]})
                     reply = utils_json.to_string(output_list)
 
                 elif out_format == "json":
@@ -17178,7 +17239,24 @@ def get_version(status, io_buff_in, cmd_words, trace):
 
     code_version = node_info.get_version(status)
 
-    reply = f"EdgeLake Version: {code_version}"   # Includes git version and date
+    offset = get_command_offset(cmd_words)
+    words_count = len(cmd_words)
+
+    # Check for format specification
+    if words_count >= (offset + 5) and utils_data.test_words(cmd_words, offset + 2, ["where", "format", "="]):
+        reply_format = cmd_words[offset + 5]
+    else:
+        reply_format = None
+
+    if reply_format == "mcp":
+        # MCP format: structured JSON with version details
+        mcp_struct = {
+            "version": code_version,
+            "node_name": node_info.get_node_name()
+        }
+        reply = utils_json.to_string(mcp_struct)
+    else:
+        reply = f"EdgeLake Version: {code_version}"   # Includes git version and date
 
     return [process_status.SUCCESS, reply]
 
