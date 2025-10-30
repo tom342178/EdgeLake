@@ -75,6 +75,27 @@ EdgeLake supports three primary node types, each configurable via environment va
 
 ## Development Commands
 
+### Build and Deploy Cycle
+
+**IMPORTANT:** The project uses custom Makefile aliases for build and deploy operations.
+
+```bash
+# Build EdgeLake Docker image
+mel build
+
+# Deploy to environment
+mel deploy work-from=home    # Deploy from local repository
+mel deploy work-from=remote  # Deploy from remote repository
+
+# Current working mode: work-from=remote
+```
+
+**Notes:**
+- These are aliases to `../utilities/edgelake/Makefile` and can be run from anywhere in the project
+- The tests in the Makefile are currently incompatible with the refactoring work in progress
+- **Do NOT use `make test` commands** - they will not work during this refactoring phase
+- Only use `mel build` and `mel deploy` commands
+
 ### Installation
 
 Via Docker (recommended):
