@@ -315,11 +315,16 @@ class ToolExecutor:
         """
         # Ensure result is parsed JSON
         if isinstance(result, str):
+            # Empty string is normal (not an error), just return it
+            if not result:
+                return result
+
             try:
                 result = json.loads(result)
             except (json.JSONDecodeError, TypeError) as e:
                 # Keep at WARNING - this is a failure we need to see and fix
-                result_preview = result[:100] if result else "(empty string)"
+                # (non-empty strings should be valid JSON)
+                result_preview = result[:100]
                 tool_name = getattr(self, '_current_tool', 'unknown')
                 logger.warning(
                     f"Failed to parse result as JSON for tool '{tool_name}': {e}\n"
