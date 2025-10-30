@@ -61,17 +61,17 @@ class EdgeLakeDirectClient:
             timeout: Command timeout in seconds (default: 30)
 
         Returns:
-            Command result
+            Command result (returns empty string during shutdown instead of raising)
 
         Raises:
             asyncio.TimeoutError: If command execution exceeds timeout
         """
         logger.debug(f"Executing command directly: {command}")
 
-        # Check if client is shutting down
+        # Check if client is shutting down - return empty result instead of raising
         if self._shutdown:
-            logger.warning(f"Client is shutting down, rejecting command: {command}")
-            raise RuntimeError("EdgeLake client is shutting down")
+            logger.debug(f"Client is shutting down, returning empty result for: {command}")
+            return ""
 
         loop = asyncio.get_event_loop()
 
@@ -86,10 +86,11 @@ class EdgeLakeDirectClient:
                 timeout=timeout
             )
         except RuntimeError as e:
-            # Handle executor shutdown gracefully
+            # Handle executor shutdown gracefully - return empty instead of raising
             if "shutdown" in str(e).lower() or "interpreter shutdown" in str(e).lower():
-                logger.warning(f"Executor shutting down during command execution: {command}")
-                raise RuntimeError("EdgeLake client is shutting down") from e
+                logger.debug(f"Executor shutting down during command execution, returning empty result: {command}")
+                return ""
+            # Re-raise other RuntimeErrors with full context
             raise
         except asyncio.TimeoutError:
             logger.error(f"Command timed out after {timeout}s: {command}")
