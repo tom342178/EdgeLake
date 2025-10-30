@@ -1,6 +1,9 @@
 # ==== Part 1: Build stage ====
 FROM python:3.11-slim AS builder
 
+# Build argument for deployment-scripts repo (can be overridden at build time)
+ARG DEPLOYMENT_SCRIPTS_REPO=https://github.com/tom342178/deployment-scripts
+
 WORKDIR /app/
 
 # Copy source code
@@ -38,6 +41,9 @@ RUN git clone https://github.com/oshadmon/nebula-anylog /app/nebula
 COPY setup.cfg /app/EdgeLake/setup.cfg
 
 # ==== Part 3: Runtime configuration ====
+# Pass build arg to runtime env
+ARG DEPLOYMENT_SCRIPTS_REPO
+
 ENV PYTHONPATH=/app/EdgeLake \
     EDGELAKE_PATH=/app \
     EDGELAKE_HOME=/app/EdgeLake \
@@ -51,7 +57,8 @@ ENV PYTHONPATH=/app/EdgeLake \
     ANYLOG_REST_PORT=32549 \
     ANYLOG_MCP_PORT=50051 \
     LEDGER_CONN=127.0.0.1:32049 \
-    INIT_TYPE=prod
+    INIT_TYPE=prod \
+    DEPLOYMENT_SCRIPTS_REPO=${DEPLOYMENT_SCRIPTS_REPO}
 
 # Create startup wrapper script for Python-based deployment
 RUN echo '#!/bin/bash\n\
@@ -59,7 +66,8 @@ set -e\n\
 \n\
 # Clone deployment-scripts if not present\n\
 if [[ ! -d $EDGELAKE_PATH/deployment-scripts || ! "$(ls -A $EDGELAKE_PATH/deployment-scripts)" ]] ; then\n\
-  git clone https://github.com/EdgeLake/deployment-scripts $EDGELAKE_PATH/deployment-scripts\n\
+  echo "Cloning deployment-scripts from ${DEPLOYMENT_SCRIPTS_REPO}"\n\
+  git clone ${DEPLOYMENT_SCRIPTS_REPO} $EDGELAKE_PATH/deployment-scripts\n\
 fi\n\
 \n\
 # Run EdgeLake with main.al initialization script\n\
