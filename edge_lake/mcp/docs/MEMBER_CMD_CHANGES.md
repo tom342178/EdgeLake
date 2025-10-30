@@ -23,7 +23,7 @@ The changes add support for `format=mcp` directive to metadata commands (blockch
 
 ### 1. format_values Dictionary (Lines 130-137)
 
-**Purpose:** Document that format=mcp is reserved for metadata commands only.
+**Purpose:** Document that format=mcp is currently enabled for metadata commands only.
 
 **Change:**
 ```python
@@ -40,7 +40,7 @@ format_values = {
 **Rationale:**
 - SQL queries already return clean JSON with `format=json`
 - Adding `format=mcp` to SQL causes operator node compatibility issues
-- Clear separation: MCP for metadata, JSON for data queries
+- Clear separation: MCP for metadata, JSON for data queries, we will probably visit this next.
 
 ---
 
@@ -384,7 +384,7 @@ blockchain get table where format = json
 blockchain get table  # No format - should work
 ```
 
-### Automated Testing
+### Automated Testing - IN PROGRESS
 
 See `tests/test_format_changes.py` for comprehensive test suite covering:
 - Regression testing (existing commands still work)
@@ -453,19 +453,8 @@ To use these features in MCP tools:
 
 - `edge_lake/mcp/config/tools.yaml` - MCP tool definitions using these commands
 - `edge_lake/mcp/docs/MCP_FORMAT_DESIGN.md` - Overall MCP format design
-- `tests/test_format_changes.py` - Test suite for validation
-- `tests/README_FORMAT_TESTS.md` - Testing documentation
-
----
-
-## Future Enhancements
-
-Possible additions:
-1. `blockchain get operator where format = mcp` - Node discovery
-2. `blockchain get cluster where format = mcp` - Cluster info
-3. Additional metadata commands with MCP format support
-
----
+- `tests/test_format_changes.py` - Test suite for validation (left in mcp-to-core branch)
+- `tests/README_FORMAT_TESTS.md` - Testing documentation (left in mcp-to-core branch)
 
 ## References
 
