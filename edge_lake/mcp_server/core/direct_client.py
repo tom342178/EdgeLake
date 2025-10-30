@@ -34,6 +34,7 @@ class EdgeLakeDirectClient:
             max_workers: Maximum concurrent worker threads
         """
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._shutdown = False
 
         # Import EdgeLake modules
         try:
@@ -67,6 +68,11 @@ class EdgeLakeDirectClient:
         """
         logger.debug(f"Executing command directly: {command}")
 
+        # Check if client is shutting down
+        if self._shutdown:
+            logger.warning(f"Client is shutting down, rejecting command: {command}")
+            raise RuntimeError("EdgeLake client is shutting down")
+
         loop = asyncio.get_event_loop()
 
         try:
@@ -79,6 +85,12 @@ class EdgeLakeDirectClient:
                 ),
                 timeout=timeout
             )
+        except RuntimeError as e:
+            # Handle executor shutdown gracefully
+            if "shutdown" in str(e).lower() or "interpreter shutdown" in str(e).lower():
+                logger.warning(f"Executor shutting down during command execution: {command}")
+                raise RuntimeError("EdgeLake client is shutting down") from e
+            raise
         except asyncio.TimeoutError:
             logger.error(f"Command timed out after {timeout}s: {command}")
             raise TimeoutError(f"Command execution timed out after {timeout} seconds: {command}")
@@ -349,4 +361,8 @@ class EdgeLakeDirectClient:
     def close(self):
         """Shutdown the thread pool executor"""
         logger.debug("Shutting down EdgeLake direct client")
-        self.executor.shutdown(wait=True)
+        self._shutdown = True
+        try:
+            self.executor.shutdown(wait=True, cancel_futures=True)
+        except Exception as e:
+            logger.warning(f"Error during executor shutdown: {e}")
