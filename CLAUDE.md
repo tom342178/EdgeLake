@@ -93,14 +93,14 @@ EdgeLake supports three primary node types, each configurable via environment va
 mel build
 
 # Deploy to environment
-mel deploy work-from=home    # Deploy from local repository
-mel deploy work-from=remote  # Deploy from remote repository
+mel deploy work-from=home    # Deploy to VM with home network address 192.168.1.n
+mel deploy work-from=remote  # Deploy to VM with portable router network address 192.168.8.n
 
 # Current working mode: work-from=remote
 ```
 
 **Notes:**
-- These are aliases to `../utilities/edgelake/Makefile` and can be run from anywhere in the project
+- mel is an alias to Make  `../utilities/edgelake/Makefile` and can be run from anywhere in the project
 - The tests in the Makefile are currently incompatible with the refactoring work in progress
 - **Do NOT use `make test` commands** - they will not work during this refactoring phase
 - Only use `mel build` and `mel deploy` commands
