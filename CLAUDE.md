@@ -67,6 +67,15 @@ EdgeLake supports three primary node types, each configurable via environment va
 - `utils_*.py`: Various utilities for I/O, JSON, SQL, data handling, printing
 - `streaming_data.py`: Data streaming management
 
+**MCP Server** (`edge_lake/mcp/`):
+- `server/mcp_server.py`: MCP protocol server integrated with http_server.py
+- `transport/sse_handler.py`: SSE transport layer for MCP over HTTP
+- `core/query_builder.py`: SQL query construction from MCP tool parameters
+- `core/query_executor.py`: Hybrid validation + streaming query execution
+- `core/direct_client.py`: Direct integration with member_cmd.process_cmd()
+- `core/command_builder.py`: EdgeLake command construction
+- `tools/`: MCP tool definitions and executors
+
 ### Data Flow
 
 1. **Data Ingestion**: Devices → (MQTT/REST/gRPC/JSON Files) → Operator Nodes → Local DBMS
@@ -186,3 +195,127 @@ The system uses a permissioned network model:
 - Uses Cython compilation for release builds
 - Minimal external dependencies (see requirements.txt)
 - Custom parameter/dictionary system (`params.py`) for configuration management
+
+## MCP Server Integration (Refactoring In Progress)
+
+### Overview
+
+The MCP (Model Context Protocol) server is being refactored to integrate with EdgeLake's core HTTP infrastructure instead of using a standalone server. This enables unified HTTP handling, better resource management, and support for large query responses.
+
+**Documentation**:
+- **Design Document**: `edge_lake/mcp/DESIGN.md` - Complete architecture and technical specifications
+- **Implementation Plan**: `edge_lake/mcp/IMPLEMENTATION_PLAN.md` - 4-week phased implementation with detailed tasks
+
+### Current Status
+
+**POC Implementation** (in `edge_lake/mcp/missing-context/`):
+- Standalone server.py using Starlette/Uvicorn for SSE transport
+- Working MCP protocol implementation
+- Functional query builder, executor, and direct client
+
+**Target Architecture** (refactoring to):
+- Integrate with `edge_lake/tcpip/http_server.py` (production HTTP server)
+- Use existing ThreadedHTTPServer and workers pool
+- Leverage ChunkedHTTPRequestHandler for streaming
+- Support block transport via message_server.py for large responses
+
+### Key Components
+
+1. **HTTP Server Integration** (`edge_lake/tcpip/http_server.py`):
+   - New endpoints: `/mcp/sse` and `/mcp/messages/`
+   - Reuses ThreadedHTTPServer infrastructure
+   - Shares workers pool with REST API
+
+2. **SSE Transport Layer** (`edge_lake/mcp/transport/sse_handler.py`):
+   - SSE protocol implementation on top of http_server
+   - MCP message framing and routing
+   - Integration with ChunkedHTTPRequestHandler
+
+3. **MCP Server** (`edge_lake/mcp/server/mcp_server.py`):
+   - MCP protocol handlers (list_tools, call_tool)
+   - Tool execution via direct_client
+   - Configuration and lifecycle management
+
+4. **Core Components** (preserved from POC):
+   - `query_builder.py`: SQL query construction
+   - `query_executor.py`: Hybrid validation + streaming (uses select_parser + process_fetch_rows)
+   - `direct_client.py`: Direct member_cmd.process_cmd() integration
+   - `command_builder.py`: EdgeLake command construction
+
+5. **Block Transport** (for large results):
+   - Uses message_server.py block transport
+   - Threshold-based selection (>10MB)
+   - Maintains streaming for efficiency
+
+### Architecture Diagram
+
+```
+MCP Client (Claude/External)
+         ↓ HTTP/SSE
+edge_lake/tcpip/http_server.py
+  - ThreadedHTTPServer
+  - ChunkedHTTPRequestHandler
+  - /mcp/sse endpoint
+         ↓
+edge_lake/mcp/transport/sse_handler.py
+  - SSE protocol
+  - MCP message framing
+         ↓
+edge_lake/mcp/server/mcp_server.py
+  - list_tools, call_tool handlers
+         ↓
+edge_lake/mcp/core/
+  - query_builder, query_executor
+  - direct_client → member_cmd
+         ↓
+EdgeLake Core (member_cmd, dbms, etc.)
+```
+
+### Query Execution Flow
+
+1. **MCP Tool Call** → MCP server receives tool request
+2. **Query Building** → query_builder constructs SQL from parameters
+3. **Validation** → query_executor.validate_query() calls select_parser()
+   - Validates syntax and permissions
+   - Transforms distributed queries (e.g., AVG → SUM+COUNT)
+4. **Execution** → query_executor chooses mode:
+   - **Streaming**: process_fetch_rows() for large results
+   - **Batch**: Collect all rows for aggregates
+5. **Transport** → Response via:
+   - SSE streaming for normal queries
+   - Block transport for large results (>10MB)
+
+### Implementation Status
+
+**Current Phase**: Phase 1 - Core Integration (Week 1)
+
+**Next Tasks**:
+1. Create SSE transport layer (`edge_lake/mcp/transport/sse_handler.py`)
+2. Modify http_server.py for MCP endpoint routing
+3. Refactor MCPServer class to remove Starlette/Uvicorn
+4. Update member_cmd.py with `run mcp server` command
+5. End-to-end integration testing
+
+**Timeline**:
+- Phase 1: Core Integration (Week 1) - IN PROGRESS
+- Phase 2: Block Transport (Week 2)
+- Phase 3: Testing & Documentation (Week 3)
+- Phase 4: Production Deployment (Week 4)
+
+See `edge_lake/mcp/IMPLEMENTATION_PLAN.md` for complete task breakdown and dependencies.
+
+### Development Notes
+
+- **Do NOT modify** files in `edge_lake/mcp/missing-context/` - these are the POC reference
+- **Core components** (query_builder, query_executor, direct_client) are stable and will be preserved
+- **Focus areas**: HTTP integration, SSE transport layer, block transport
+- **Testing**: Use existing EdgeLake test infrastructure, not POC tests
+- **Code Review**: All http_server.py changes require review to prevent REST API regressions
+
+### Benefits
+
+1. **Unified Infrastructure**: Single HTTP server for REST, data ingestion, and MCP
+2. **Production Ready**: Leverages tested http_server.py with SSL, auth, logging
+3. **Resource Efficiency**: Shared workers pool reduces overhead
+4. **Large Response Support**: Block transport for massive query results
+5. **Streaming**: Both SSE and chunked transfer encoding supported
