@@ -7,5 +7,6 @@ License: Mozilla Public License 2.0
 from .direct_client import EdgeLakeDirectClient
 from .command_builder import CommandBuilder
 from .query_builder import QueryBuilder
+from .query_executor import QueryExecutor
 
-__all__ = ['EdgeLakeDirectClient', 'CommandBuilder', 'QueryBuilder']
+__all__ = ['EdgeLakeDirectClient', 'CommandBuilder', 'QueryBuilder', 'QueryExecutor']

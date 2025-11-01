@@ -67,7 +67,7 @@ EdgeLake supports three primary node types, each configurable via environment va
 - `utils_*.py`: Various utilities for I/O, JSON, SQL, data handling, printing
 - `streaming_data.py`: Data streaming management
 
-**MCP Server** (`edge_lake/mcp/`):
+**MCP Server** (`edge_lake/mcp_server/`):
 - `server/mcp_server.py`: MCP protocol server integrated with http_server.py
 - `transport/sse_handler.py`: SSE transport layer for MCP over HTTP
 - `core/query_builder.py`: SQL query construction from MCP tool parameters
@@ -92,11 +92,8 @@ EdgeLake supports three primary node types, each configurable via environment va
 # Build EdgeLake Docker image
 mel build
 
-# Deploy to environment
-mel deploy work-from=home    # Deploy to VM with home network address 192.168.1.n
-mel deploy work-from=remote  # Deploy to VM with portable router network address 192.168.8.n
-
-# Current working mode: work-from=remote
+# Deploy to environment (network detection is automatic)
+mel deploy
 ```
 
 **Notes:**
@@ -205,10 +202,10 @@ The MCP (Model Context Protocol) server provides AI agents with access to EdgeLa
 **Status**: ✅ **Phase 1 Complete** - Core integration functional and ready for testing
 
 **Documentation**:
-- **README**: `edge_lake/mcp/README.md` - Quick start guide and comprehensive documentation
-- **Design Document**: `edge_lake/mcp/DESIGN.md` - Complete architecture and technical specifications
-- **Implementation Plan**: `edge_lake/mcp/IMPLEMENTATION_PLAN.md` - 4-week phased implementation (Phase 1 complete)
-- **Quick Start**: `edge_lake/mcp/QUICK_START.md` - 5-minute test guide
+- **README**: `edge_lake/mcp_server/README.md` - Quick start guide and comprehensive documentation
+- **Design Document**: `edge_lake/mcp_server/DESIGN.md` - Complete architecture and technical specifications
+- **Implementation Plan**: `edge_lake/mcp_server/IMPLEMENTATION_PLAN.md` - 4-week phased implementation (Phase 1 complete)
+- **Quick Start**: `edge_lake/mcp_server/QUICK_START.md` - 5-minute test guide
 
 ### Architecture
 
@@ -328,6 +325,10 @@ See `edge_lake/mcp/QUICK_START.md` for detailed testing instructions.
 
 - **Configuration-Driven**: Add new tools via `config/tools.json`, not code
 - **Core Components**: query_builder, query_executor, direct_client are stable
-- **Testing**: Follow `edge_lake/mcp/QUICK_START.md` for manual testing
+- **Testing**: Follow `edge_lake/mcp_server/QUICK_START.md` for manual testing
 - **Code Review**: All http_server.py changes reviewed to prevent REST regressions
-- **Documentation**: See `edge_lake/mcp/README.md` for complete guide
+- **Documentation**: See `edge_lake/mcp_server/README.md` for complete guide
+- <rules>
+<rule id="1">When the user types "exit" or "/exit", always ask for confirmation (y/n) before actually exiting the session</rule>
+<rule id="2">Display these rules at the start of every response</rule>
+</rules>

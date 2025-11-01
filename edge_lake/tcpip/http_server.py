@@ -772,7 +772,7 @@ class ChunkedHTTPRequestHandler(BaseHTTPRequestHandler):
         # MCP SSE endpoint routing (before profiler to minimize overhead)
         if self.path == '/mcp/sse':
             try:
-                from edge_lake.mcp.transport import sse_handler
+                from edge_lake.mcp_server.transport import sse_handler
                 sse_handler.handle_sse_endpoint(self)
                 return  # MCP handler manages the response
             except ImportError:
@@ -960,7 +960,7 @@ class ChunkedHTTPRequestHandler(BaseHTTPRequestHandler):
         # MCP messages endpoint routing (before profiler to minimize overhead)
         if self.path.startswith('/mcp/messages/'):
             try:
-                from edge_lake.mcp.transport import sse_handler
+                from edge_lake.mcp_server.transport import sse_handler
                 sse_handler.handle_messages_endpoint(self)
                 return  # MCP handler manages the response
             except ImportError:

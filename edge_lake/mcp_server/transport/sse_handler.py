@@ -229,10 +229,11 @@ class SSETransport:
             with self.connection_lock:
                 self.connections[session_id] = connection
 
-            # Send initial connection event with session ID
-            connection.send_event('connected', {
-                'session_id': session_id,
-                'message': 'MCP SSE connection established'
+            # Send endpoint event (MCP SSE protocol spec)
+            # Client needs to know where to POST messages
+            endpoint_path = f'/mcp/messages/{session_id}'
+            connection.send_event('endpoint', {
+                'endpoint': endpoint_path
             }, event_id=0)
 
             logger.info(f"SSE connection established: {session_id} from {handler.client_address}")
@@ -337,8 +338,8 @@ class SSETransport:
                 'message': 'Request will be processed and response sent via SSE'
             }).encode('utf-8'))
 
-            # Process message asynchronously
-            self._process_message_async(session_id, message)
+            # Process message synchronously (no new thread)
+            self._process_message_sync(session_id, message)
 
             return True
 
@@ -350,55 +351,51 @@ class SSETransport:
                 pass
             return False
 
-    def _process_message_async(self, session_id: str, message: Dict[str, Any]):
+    def _process_message_sync(self, session_id: str, message: Dict[str, Any]):
         """
-        Process MCP message asynchronously.
+        Process MCP message synchronously (no new thread).
 
-        Routes the message to the MCP server for processing and sends
-        the response via SSE.
+        Routes the message to the MCP server for processing and queues
+        the response for the SSE connection manager to send.
+
+        Note: Renamed from _process_message_async to _process_message_sync.
+        No thread spawning needed - this runs in the HTTP worker thread
+        and returns quickly (MCP processing is synchronous, response is queued).
 
         Args:
             session_id: Session identifier
             message: JSON-RPC message
         """
-        # Run in thread pool to avoid blocking
-        import asyncio
+        try:
+            # Process message via MCP server (synchronous)
+            response = self.mcp_server.process_message(message)
 
-        def process():
-            try:
-                # Process message via MCP server
-                response = self.mcp_server.process_message(message)
+            # Queue response for SSE delivery
+            with self.connection_lock:
+                connection = self.connections.get(session_id)
 
-                # Send response via SSE
-                with self.connection_lock:
-                    connection = self.connections.get(session_id)
+            if connection:
+                connection.queue_message('message', response)
+            else:
+                logger.warning(f"Cannot send response - session closed: {session_id}")
 
-                if connection:
-                    connection.queue_message('message', response)
-                else:
-                    logger.warning(f"Cannot send response - session closed: {session_id}")
+        except Exception as e:
+            logger.error(f"Error processing message for {session_id}: {e}", exc_info=True)
 
-            except Exception as e:
-                logger.error(f"Error processing message for {session_id}: {e}", exc_info=True)
+            # Queue error response for SSE delivery
+            with self.connection_lock:
+                connection = self.connections.get(session_id)
 
-                # Send error via SSE
-                with self.connection_lock:
-                    connection = self.connections.get(session_id)
-
-                if connection:
-                    error_response = {
-                        'jsonrpc': '2.0',
-                        'id': message.get('id'),
-                        'error': {
-                            'code': -32603,
-                            'message': f'Internal error: {str(e)}'
-                        }
+            if connection:
+                error_response = {
+                    'jsonrpc': '2.0',
+                    'id': message.get('id'),
+                    'error': {
+                        'code': -32603,
+                        'message': f'Internal error: {str(e)}'
                     }
-                    connection.queue_message('error', error_response)
-
-        # Execute in thread
-        thread = threading.Thread(target=process, daemon=True)
-        thread.start()
+                }
+                connection.queue_message('error', error_response)
 
     def _keepalive_loop(self):
         """

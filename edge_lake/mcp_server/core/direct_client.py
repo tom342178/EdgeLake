@@ -11,7 +11,6 @@ import asyncio
 import io
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from typing import Any, Dict, List, Optional
 
@@ -22,18 +21,18 @@ class EdgeLakeDirectClient:
     """
     Direct integration client for EdgeLake MCP server.
 
-    Calls member_cmd.process_cmd() directly instead of using HTTP,
-    allowing the MCP server to run embedded within the EdgeLake process.
+    Calls member_cmd.process_cmd() directly (synchronously) without HTTP overhead.
+    No ThreadPool needed - member_cmd.process_cmd() is already synchronous.
     """
 
-    def __init__(self, max_workers: int = 10):
+    def __init__(self, max_workers: int = None):
         """
         Initialize direct client.
 
         Args:
-            max_workers: Maximum concurrent worker threads
+            max_workers: Ignored (kept for API compatibility)
         """
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        # No ThreadPool needed - member_cmd.process_cmd() is synchronous
         self._shutdown = False
 
         # Import EdgeLake modules
@@ -53,18 +52,19 @@ class EdgeLakeDirectClient:
 
     async def execute_command(self, command: str, headers: Optional[Dict[str, str]] = None, timeout: float = 30.0) -> Any:
         """
-        Execute an EdgeLake command directly.
+        Execute an EdgeLake command directly (synchronously).
 
         Args:
             command: EdgeLake command string
             headers: Optional headers (for compatibility, mostly ignored in direct mode)
-            timeout: Command timeout in seconds (default: 30)
+            timeout: Command timeout in seconds (default: 30, currently not enforced)
 
         Returns:
             Command result (returns empty string during shutdown instead of raising)
 
-        Raises:
-            asyncio.TimeoutError: If command execution exceeds timeout
+        Note:
+            Timeout is not currently enforced since member_cmd.process_cmd() is synchronous.
+            In practice, EdgeLake commands either complete quickly or are async (run client).
         """
         logger.debug(f"Executing command directly: {command}")
 
@@ -73,28 +73,12 @@ class EdgeLakeDirectClient:
             logger.debug(f"Client is shutting down, returning empty result for: {command}")
             return ""
 
-        loop = asyncio.get_event_loop()
-
         try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(
-                    self.executor,
-                    self._sync_execute,
-                    command,
-                    headers
-                ),
-                timeout=timeout
-            )
-        except RuntimeError as e:
-            # Handle executor shutdown gracefully - return empty instead of raising
-            if "shutdown" in str(e).lower() or "interpreter shutdown" in str(e).lower():
-                logger.debug(f"Executor shutting down during command execution, returning empty result: {command}")
-                return ""
-            # Re-raise other RuntimeErrors with full context
+            # Call synchronously - no ThreadPool needed
+            return self._sync_execute(command, headers)
+        except Exception as e:
+            logger.error(f"Command execution failed: {e}")
             raise
-        except asyncio.TimeoutError:
-            logger.error(f"Command timed out after {timeout}s: {command}")
-            raise TimeoutError(f"Command execution timed out after {timeout} seconds: {command}")
 
     def _sync_execute(self, command: str, headers: Optional[Dict[str, str]] = None) -> Any:
         """
@@ -360,10 +344,7 @@ class EdgeLakeDirectClient:
             raise
 
     def close(self):
-        """Shutdown the thread pool executor"""
+        """Shutdown the direct client"""
         logger.debug("Shutting down EdgeLake direct client")
         self._shutdown = True
-        try:
-            self.executor.shutdown(wait=True, cancel_futures=True)
-        except Exception as e:
-            logger.warning(f"Error during executor shutdown: {e}")
+        # No ThreadPool to shutdown - client is now synchronous

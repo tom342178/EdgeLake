@@ -12,16 +12,8 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-# MCP imports
-try:
-    from mcp.server import Server
-    from mcp.types import TextContent, Tool
-    MCP_AVAILABLE = True
-except ImportError:
-    MCP_AVAILABLE = False
-    Server = None
-    TextContent = None
-    Tool = None
+# EdgeLake MCP protocol (lightweight implementation)
+from ..protocol import Server, TextContent, Tool
 
 # EdgeLake imports
 from ..config import Config
@@ -88,13 +80,9 @@ class MCPServer:
         )
 
         # Initialize MCP protocol server
-        if MCP_AVAILABLE:
-            self.server = Server("edgelake-mcp-server")
-            self._register_handlers()
-            logger.info(f"MCP Server initialized (version={__version__})")
-        else:
-            self.server = None
-            logger.error("MCP library not available - install with: pip install mcp")
+        self.server = Server("edgelake-mcp-server")
+        self._register_handlers()
+        logger.info(f"MCP Server initialized (version={__version__})")
 
     def _register_handlers(self):
         """Register MCP protocol handlers."""
@@ -149,9 +137,6 @@ class MCPServer:
         Called by 'run mcp server' command in member_cmd.py.
         This initializes the SSE transport which integrates with http_server.py.
         """
-        if not MCP_AVAILABLE:
-            raise RuntimeError("MCP library not available - install with: pip install mcp")
-
         # Initialize SSE transport
         from ..transport.sse_handler import initialize as init_sse
         self.transport = init_sse(self)
@@ -211,13 +196,32 @@ class MCPServer:
 
         try:
             # Route to appropriate handler
-            if method == 'tools/list':
-                # Call list_tools handler
-                result = asyncio.run(self._call_list_tools())
+            if method == 'initialize':
+                # MCP initialize handshake
                 return {
                     "jsonrpc": "2.0",
                     "id": msg_id,
-                    "result": result
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "edgelake-mcp-server",
+                            "version": __version__
+                        }
+                    }
+                }
+
+            elif method == 'tools/list':
+                # Call list_tools handler
+                tools = asyncio.run(self._call_list_tools())
+                return {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "tools": tools
+                    }
                 }
 
             elif method == 'tools/call':
@@ -225,11 +229,13 @@ class MCPServer:
                 tool_name = params.get('name')
                 arguments = params.get('arguments', {})
 
-                result = asyncio.run(self._call_tool(tool_name, arguments))
+                content = asyncio.run(self._call_tool(tool_name, arguments))
                 return {
                     "jsonrpc": "2.0",
                     "id": msg_id,
-                    "result": result
+                    "result": {
+                        "content": content
+                    }
                 }
 
             else:
@@ -310,7 +316,7 @@ class MCPServer:
 
         return {
             "version": __version__,
-            "mcp_available": MCP_AVAILABLE,
+            "protocol": "EdgeLake lightweight MCP",
             "active_connections": len(active_connections),
             "connection_ids": active_connections,
             "enabled_tools": self.enabled_tools or "all",
