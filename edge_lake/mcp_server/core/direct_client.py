@@ -112,14 +112,11 @@ class EdgeLakeDirectClient:
                 # For network queries, this would typically be handled by the command itself
                 pass
 
-            # Create a StringIO to capture REST-formatted output
-            # This acts as the wfile (socket) that REST responses are written to
-            result_capture = io.StringIO()
-
             # Set REST caller flag so output goes through JSON formatting path
             # instead of struct_print() which outputs Python dict format
+            # Result will be available via get_result_set() after command completes
             status.get_job_handle().set_rest_caller()
-            status.get_job_handle().set_output_socket(result_capture)
+            # Note: No need to set_output_socket() - we'll get result from get_result_set()
 
             logger.debug(f"Calling member_cmd.process_cmd for: {command}")
 
@@ -167,8 +164,11 @@ class EdgeLakeDirectClient:
             logger.debug(f"Command completed with return value: {ret_val}")
 
             if ret_val == self.process_status.SUCCESS:
-                # Extract result from REST capture, buffer, or stdout
-                result = self._extract_result(status, io_buff, command, stdout_capture.getvalue(), result_capture.getvalue())
+                # Get result from job handle (set via set_result_set)
+                result_set = status.get_job_handle().get_result_set()
+
+                # Extract result from result_set, buffer, or stdout
+                result = self._extract_result(status, io_buff, command, stdout_capture.getvalue(), result_set)
                 logger.debug(f"Extracted result: {type(result)}")
                 return result
             elif ret_val == 141:
@@ -185,32 +185,39 @@ class EdgeLakeDirectClient:
             logger.error(f"Error executing command '{command}': {e}", exc_info=True)
             raise
 
-    def _extract_result(self, status, io_buff: bytearray, command: str, stdout_output: str = "", rest_output: str = "") -> Any:
+    def _extract_result(self, status, io_buff: bytearray, command: str, stdout_output: str = "", result_set: str = None) -> Any:
         """
-        Extract result from REST output, buffer, or captured stdout.
+        Extract result from result_set, buffer, or captured stdout.
 
         Args:
             status: ProcessStat object
             io_buff: IO buffer
             command: Original command
             stdout_output: Captured stdout from command execution
-            rest_output: Captured REST-formatted output (JSON)
+            result_set: Result from job_handle.get_result_set() (JSON string)
 
         Returns:
             Extracted result
         """
-        # Try to get from REST output first (JSON-formatted, highest priority)
-        if rest_output and rest_output.strip():
-            logger.debug(f"REST output available, length: {len(rest_output)}")
-            rest_trimmed = rest_output.strip()
+        # Try to get from result_set first (set by set_result_set in member_cmd, highest priority)
+        if result_set is not None and result_set:
+            logger.debug(f"Result set available, length: {len(result_set) if isinstance(result_set, str) else 'N/A'}, type: {type(result_set)}")
 
-            try:
-                result = json.loads(rest_trimmed)
-                logger.debug(f"Successfully parsed JSON from REST output, type: {type(result)}")
-                return result
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.debug(f"REST output is not valid JSON: {e}, returning as string")
-                return rest_trimmed
+            # result_set should already be a JSON string from member_cmd
+            if isinstance(result_set, str):
+                result_trimmed = result_set.strip()
+                if result_trimmed:
+                    try:
+                        result = json.loads(result_trimmed)
+                        logger.debug(f"Successfully parsed JSON from result_set, type: {type(result)}")
+                        return result
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.debug(f"Result set is not valid JSON: {e}, returning as string")
+                        return result_trimmed
+            else:
+                # If result_set is already a dict/list, return it directly
+                logger.debug(f"Result set is already an object: {type(result_set)}")
+                return result_set
 
         # Try to get from buffer second
         try:
