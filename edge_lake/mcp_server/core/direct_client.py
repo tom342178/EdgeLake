@@ -112,9 +112,18 @@ class EdgeLakeDirectClient:
                 # For network queries, this would typically be handled by the command itself
                 pass
 
+            # Create a StringIO to capture REST-formatted output
+            # This acts as the wfile (socket) that REST responses are written to
+            result_capture = io.StringIO()
+
+            # Set REST caller flag so output goes through JSON formatting path
+            # instead of struct_print() which outputs Python dict format
+            status.get_job_handle().set_rest_caller()
+            status.get_job_handle().set_output_socket(result_capture)
+
             logger.debug(f"Calling member_cmd.process_cmd for: {command}")
 
-            # Capture stdout - some commands print results instead of populating io_buff
+            # Capture stdout as fallback (for commands that still print)
             stdout_capture = io.StringIO()
 
             # Check if this is an async command (run client)
@@ -158,8 +167,8 @@ class EdgeLakeDirectClient:
             logger.debug(f"Command completed with return value: {ret_val}")
 
             if ret_val == self.process_status.SUCCESS:
-                # Extract result from status or buffer
-                result = self._extract_result(status, io_buff, command, stdout_capture.getvalue())
+                # Extract result from REST capture, buffer, or stdout
+                result = self._extract_result(status, io_buff, command, stdout_capture.getvalue(), result_capture.getvalue())
                 logger.debug(f"Extracted result: {type(result)}")
                 return result
             elif ret_val == 141:
@@ -176,20 +185,34 @@ class EdgeLakeDirectClient:
             logger.error(f"Error executing command '{command}': {e}", exc_info=True)
             raise
 
-    def _extract_result(self, status, io_buff: bytearray, command: str, stdout_output: str = "") -> Any:
+    def _extract_result(self, status, io_buff: bytearray, command: str, stdout_output: str = "", rest_output: str = "") -> Any:
         """
-        Extract result from status object, buffer, or captured stdout.
+        Extract result from REST output, buffer, or captured stdout.
 
         Args:
             status: ProcessStat object
             io_buff: IO buffer
             command: Original command
             stdout_output: Captured stdout from command execution
+            rest_output: Captured REST-formatted output (JSON)
 
         Returns:
             Extracted result
         """
-        # Try to get from buffer first
+        # Try to get from REST output first (JSON-formatted, highest priority)
+        if rest_output and rest_output.strip():
+            logger.debug(f"REST output available, length: {len(rest_output)}")
+            rest_trimmed = rest_output.strip()
+
+            try:
+                result = json.loads(rest_trimmed)
+                logger.debug(f"Successfully parsed JSON from REST output, type: {type(result)}")
+                return result
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.debug(f"REST output is not valid JSON: {e}, returning as string")
+                return rest_trimmed
+
+        # Try to get from buffer second
         try:
             # Find null terminator
             null_pos = io_buff.find(b'\x00')
