@@ -3,13 +3,12 @@
 EdgeLake MCP SSE Comprehensive Test Suite
 
 Tests all MCP tools using proper SSE protocol implementation.
-Covers all 6 currently implemented tools:
+Covers all 5 currently implemented tools:
   1. server_info - MCP server information (internal)
   2. node_status - EdgeLake node status
-  3. list_databases - List all databases in network
-  4. list_tables - List tables in a database
-  5. get_schema - Get table schema
-  6. query - Execute distributed SQL query
+  3. list_database_schema - List all database/table combinations in network
+  4. get_schema - Get table schema
+  5. query - Execute distributed SQL query
 
 Usage:
     python3 test-mcp-sse.py --host localhost --port 50051
@@ -328,95 +327,67 @@ class MCPSSETester:
             print(f"✗ node_status failed")
             return False
 
-    def test_list_databases(self) -> bool:
-        """Test list_databases tool"""
+    def test_list_database_schema(self) -> bool:
+        """Test list_database_schema tool"""
         print(f"\n{'='*60}")
-        print("Test 5: list_databases tool")
+        print("Test 5: list_database_schema tool")
         print(f"{'='*60}")
-        print("  Tool: list_databases")
+        print("  Tool: list_database_schema")
         print("  EdgeLake Command: blockchain get table bring.json")
         print("  Arguments: None")
 
         params = {
-            "name": "list_databases",
+            "name": "list_database_schema",
             "arguments": {}
         }
 
         response = self.send_mcp_request("tools/call", params, timeout=35.0)
 
         if response and "result" in response:
-            print(f"✓ list_databases successful")
+            print(f"✓ list_database_schema successful")
             result = response["result"]
             content = result.get("content", [])
             if content:
                 text = content[0].get("text", "")
                 try:
-                    databases = json.loads(text)
-                    if isinstance(databases, list):
-                        self.discovered_databases = databases
-                        print(f"  Found {len(databases)} databases:")
-                        for db in databases[:5]:
-                            print(f"    - {db}")
-                        if len(databases) > 5:
-                            print(f"    ... and {len(databases) - 5} more")
+                    schema_data = json.loads(text)
+                    if isinstance(schema_data, list):
+                        # Extract unique databases and tables for later tests
+                        databases_set = set()
+                        tables_set = set()
+
+                        for entry in schema_data:
+                            if isinstance(entry, dict):
+                                db = entry.get('database')
+                                table = entry.get('table')
+                                if db:
+                                    databases_set.add(db)
+                                if table:
+                                    tables_set.add(table)
+
+                        self.discovered_databases = list(databases_set)
+                        self.discovered_tables = list(tables_set)
+
+                        print(f"  Found {len(schema_data)} database/table combinations:")
+                        print(f"  Unique databases: {len(self.discovered_databases)}")
+                        print(f"  Unique tables: {len(self.discovered_tables)}")
+
+                        # Show first few entries
+                        for entry in schema_data[:5]:
+                            if isinstance(entry, dict):
+                                db = entry.get('database', 'unknown')
+                                table = entry.get('table', 'unknown')
+                                print(f"    - {db}.{table}")
+                        if len(schema_data) > 5:
+                            print(f"    ... and {len(schema_data) - 5} more")
                     else:
                         print(f"  Response: {text[:200]}...")
-                except:
-                    print(f"  Response: {text[:200]}...")
+                except Exception as e:
+                    print(f"  Response parsing error: {e}")
+                    print(f"  Raw response: {text[:200]}...")
             return True
         else:
-            print(f"✗ list_databases failed")
-            return False
-
-    def test_list_tables(self) -> bool:
-        """Test list_tables tool"""
-        print(f"\n{'='*60}")
-        print("Test 6: list_tables tool")
-        print(f"{'='*60}")
-        print("  Tool: list_tables")
-        print("  EdgeLake Command: blockchain get table bring.json (filtered)")
-
-        # Determine which database to use
-        database = self.test_database or (self.discovered_databases[0] if self.discovered_databases else None)
-
-        if not database:
-            print(f"⚠ Skipping list_tables - no database available")
-            print(f"  (No --database specified and no databases discovered)")
-            return True
-
-        print(f"  Arguments: database={database}")
-
-        params = {
-            "name": "list_tables",
-            "arguments": {
-                "database": database
-            }
-        }
-
-        response = self.send_mcp_request("tools/call", params, timeout=35.0)
-
-        if response and "result" in response:
-            print(f"✓ list_tables successful")
-            result = response["result"]
-            content = result.get("content", [])
-            if content:
-                text = content[0].get("text", "")
-                try:
-                    tables = json.loads(text)
-                    if isinstance(tables, list):
-                        self.discovered_tables = tables
-                        print(f"  Found {len(tables)} tables in '{database}':")
-                        for table in tables[:5]:
-                            print(f"    - {table}")
-                        if len(tables) > 5:
-                            print(f"    ... and {len(tables) - 5} more")
-                    else:
-                        print(f"  Response: {text[:200]}...")
-                except:
-                    print(f"  Response: {text[:200]}...")
-            return True
-        else:
-            print(f"✗ list_tables failed")
+            print(f"✗ list_database_schema failed")
             return False
 
     def test_get_schema(self) -> bool:
@@ -559,10 +530,9 @@ class MCPSSETester:
             ("2. List Tools", self.test_list_tools),
             ("3. Tool: server_info", self.test_server_info),
             ("4. Tool: node_status", self.test_node_status),
-            ("5. Tool: list_databases", self.test_list_databases),
-            ("6. Tool: list_tables", self.test_list_tables),
-            ("7. Tool: get_schema", self.test_get_schema),
-            ("8. Tool: query", self.test_query),
+            ("5. Tool: list_database_schema", self.test_list_database_schema),
+            ("6. Tool: get_schema", self.test_get_schema),
+            ("7. Tool: query", self.test_query),
         ]
 
         results = []
@@ -596,7 +566,7 @@ class MCPSSETester:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="EdgeLake MCP SSE Comprehensive Test Suite - Tests all 6 implemented tools"
+        description="EdgeLake MCP SSE Comprehensive Test Suite - Tests all 5 implemented tools"
     )
     parser.add_argument(
         "--host",
