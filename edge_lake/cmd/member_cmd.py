@@ -100,6 +100,7 @@ query_mode = {  # default query parameters like timeout
 code_debug = {}  # a dictionary that represents code sections to debug
 script_mutex = threading.Lock()  # mutex to avoid same id to multiple scripts
 statistics_ = {}        # Statistics in get status command
+mcp_server_instance_ = None  # MCP Server instance (used in is_mcp_running and get_mcp_info)
 
 #                                      Must     Add      Is
 #                                      exists   Counter  Unique
@@ -134,8 +135,7 @@ format_values = {
                     "json:output" : 0,      # Output as JSON rows
                     "json:list" : 0,        # Output as a JSON list
                     "table" : 0,            # Output as a table
-                    # Note: format=mcp is NOT supported for SQL queries
-                    # Use format=mcp only for metadata commands (blockchain get, get version, etc.)
+                    "mcp" : 0,              # Output for MCP protocol (handled like json:list internally)
 }
 dest_values = {
                     "stdout" : 0,             # Output to stdout
@@ -209,10 +209,27 @@ def get_query_pool_info(status):
         info_str = ""
     return info_str
 
+# =======================================================================================================================
+# MCP Server Status Functions (defined early for test_active_ dictionary)
+# =======================================================================================================================
+def is_mcp_running():
+    """Check if MCP server is active"""
+    return mcp_server_instance_ is not None
+
+def get_mcp_info(status=None):
+    """Return MCP server connection info"""
+    if not is_mcp_running():
+        return ""
+    # MCP uses SSE over REST server, so show REST endpoint
+    info_str = net_utils.get_connection_info(1)  # Get REST connection info
+    info_str += " (SSE endpoint: /mcp/sse)"
+    return info_str
+
 test_active_ = {
     #                    Process name | Get is acrive | Comment
     "tcp": ("TCP", net_utils.is_tcp_connected, tcpip_server.get_info),
     "rest": ("REST", net_utils.is_rest_connected, http_server.get_info),
+    "mcp": ("MCP", is_mcp_running, get_mcp_info),
     "operator": ("Operator", aloperator.is_active, aloperator.get_info),
     "blockchain sync": ("Blockchain Sync", bsync.is_running, bsync.get_info),
     "scheduler": ("Scheduler", task_scheduler.is_running, task_scheduler.get_info),
@@ -3691,6 +3708,16 @@ def get_sql_processing_info(status, cmd_words, words_count, index):
 
 
             if not ret_val:
+                # Convert format=mcp to format=json:list for operator processing
+                # This allows operators to accept format=mcp from query nodes
+                # while processing it as json:list for proper aggregation
+                # Note: conditions["format"] is a list, not a string
+                if "format" in conditions:
+                    format_list = conditions["format"]
+                    if "mcp" in format_list:
+                        # Replace "mcp" with "json:list" in the list
+                        conditions["format"] = ["json:list" if f == "mcp" else f for f in format_list]
+
                 ret_val = interpreter.test_values(status, conditions, "format", format_values)
                 if not ret_val:
                     ret_val = interpreter.test_values(status, conditions, "dest", dest_values)
@@ -10235,7 +10262,6 @@ def blockchain_insert_all(status, mem_view, policy, is_local, blockchain_file, m
         if trace_level >= 2:
             utils_print.struct_print(policy, True, True)
 
-
     return ret_val
 # -----------------------------------------------------------------------------------------------------
 # An Error in updating the shared metadata
@@ -16300,10 +16326,10 @@ def get_columns(status, io_buff_in, cmd_words, trace):
                     reply = utils_json.to_string(output_list)
 
                 elif out_format == "mcp":
-                    # MCP format: list of objects with name and type
+                    # MCP format: list of objects with column_name and data_type
                     output_list = []
                     for entry in new_list:
-                        output_list.append({"name": entry[0], "type": entry[1]})
+                        output_list.append({"column_name": entry[0], "data_type": entry[1]})
                     reply = utils_json.to_string(output_list)
 
                 elif out_format == "json":
@@ -20368,6 +20394,47 @@ _buckets_commands = {
 
 
 }
+# =======================================================================================================================
+# Run MCP Server - Example: run mcp server
+# =======================================================================================================================
+def _run_mcp_server(status, io_buff_in, cmd_words, trace):
+    global mcp_server_instance_
+    if mcp_server_instance_ is not None:
+        status.add_error("MCP server is already running")
+        return process_status.ERR_process_failure
+    if not net_utils.is_active_connection(1):
+        status.add_error("REST server must be running first")
+        return process_status.ERR_process_failure
+    try:
+        from edge_lake.mcp_server import MCPServer
+        mcp_server_instance_ = MCPServer()
+        mcp_server_instance_.start()
+        utils_print.output("MCP server started", True)
+        return process_status.SUCCESS
+    except ImportError as e:
+        status.add_error(f"MCP not available: {e}")
+        return process_status.ERR_process_failure
+    except Exception as e:
+        status.add_error(f"Failed to start MCP: {e}")
+        return process_status.ERR_process_failure
+
+# =======================================================================================================================
+# Exit MCP Server - Example: exit mcp server
+# =======================================================================================================================
+def _exit_mcp_server(status, io_buff_in, cmd_words, trace):
+    global mcp_server_instance_
+    if mcp_server_instance_ is None:
+        status.add_error("MCP server is not running")
+        return process_status.ERR_process_failure
+    try:
+        mcp_server_instance_.stop()
+        mcp_server_instance_ = None
+        utils_print.output("MCP server stopped", True)
+        return process_status.SUCCESS
+    except Exception as e:
+        status.add_error(f"Failed to stop MCP: {e}")
+        return process_status.ERR_process_failure
+
 # ------------------------------------------------------------------------
 # Command Dictionaries
 # ------------------------------------------------------------------------
@@ -20808,6 +20875,31 @@ commands = {
         'trace': 0,
     },
 
+
+    'run mcp server': {
+        'command': _run_mcp_server,
+        'words_min': 3,
+        'help': {'usage': 'run mcp server',
+                 'example': 'run mcp server',
+                 'text': 'Start MCP (Model Context Protocol) server for AI agent integration.\n'
+                         'Prerequisites: REST server must be running.\n'
+                         'Endpoints: GET /mcp/sse, POST /mcp/messages/{session_id}',
+                 'link': 'blob/master/northbound%20connectors/using%20mcp.md',
+                 'keywords': ["configuration", "background processes", "api", "mcp"],
+                 },
+        'trace': 0,
+    },
+
+    'exit mcp server': {
+        'command': _exit_mcp_server,
+        'words_min': 3,
+        'help': {'usage': 'exit mcp server',
+                 'example': 'exit mcp server',
+                 'text': 'Stop MCP server and cleanup resources.',
+                 'keywords': ["background processes", "api", "mcp"],
+                 },
+        'trace': 0,
+    },
 
     'run rest server': {
         'command': _run_rest_server,
