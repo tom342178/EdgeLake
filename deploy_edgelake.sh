@@ -19,7 +19,7 @@ if [[ -n "${HZN_DEVICE_ID}" ]]; then
 fi
 
 if [[ ! -d $EDGELAKE_PATH/deployment-scripts || ! "$(ls -A $EDGELAKE_PATH/deployment-scripts)" ]] ; then  # if directory DNE
-  git clone https://github.com/EdgeLake/deployment-scripts
+  git clone -b os-dev https://github.com/EdgeLake/deployment-scripts
 fi
 
 if [[ ${ENABLE_NEBULA} == true ]] ; then
