@@ -457,6 +457,12 @@ class SSETransport:
 
                 logger.debug(f"Tool '{tool_name}' execution completed via protocol_exec")
 
+            elif method == 'notifications/initialized':
+                # Client notification that initialization is complete
+                # No response needed - this is informational only
+                logger.debug(f"Client initialized notification received: {session_id}")
+                return
+
             else:
                 # Unknown method
                 logger.warning(f"Unknown method: {method}")

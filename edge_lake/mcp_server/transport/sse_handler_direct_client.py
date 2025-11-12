@@ -402,6 +402,11 @@ class SSETransport:
             # Pass socket buffer for capturing streamed query results
             response = self.mcp_server.process_message(message, socket)
 
+            # Notifications return None (no response expected)
+            if response is None:
+                logger.debug(f"Notification processed, no response needed")
+                return
+
             # If socket buffer has data (from streamed queries), add it to response
             if socket and hasattr(socket, 'getvalue'):
                 socket_data = socket.getvalue()

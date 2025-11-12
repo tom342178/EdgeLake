@@ -447,8 +447,17 @@ See `edge_lake/mcp/QUICK_START.md` for detailed testing instructions.
   - Prefer using Task tool with Explore agent for codebase exploration
   - Only read complete large files if explicitly requested by user
 This prevents context exhaustion and enables efficient multi-turn conversations.</rule>
-<rule id="6">CRITICAL: All git commits must include DCO (Developer Certificate of Origin) sign-off. NEVER include references to Claude Code, "Generated with Claude Code", or "Co-Authored-By: Claude". Commit messages must follow this format:
+<rule id="6">CRITICAL: Git commit message rules:
 
+NEVER include any of these in commit messages:
+- "Generated with [Claude Code]"
+- "Co-Authored-By: Claude"
+- Any references to Claude, Claude Code, or AI assistance
+- Emojis (🤖) or special formatting related to Claude
+
+ALWAYS include DCO (Developer Certificate of Origin) sign-off using git configured user.name and user.email.
+
+Commit format:
 git commit -m "$(cat <<'EOF'
 Brief summary line (50 chars or less)
 
@@ -458,5 +467,5 @@ Signed-off-by: Your Name <your.email@example.com>
 EOF
 )"
 
-The DCO sign-off certifies you have the right to submit the code under the project's license. Use the git configured user.name and user.email for the sign-off.</rule>
+The DCO sign-off certifies you have the right to submit the code under the project's license.</rule>
 </rules>

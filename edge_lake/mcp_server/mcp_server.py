@@ -129,6 +129,11 @@ class MCPServer:
         logger.debug(f"Processing MCP method: {method}")
 
         try:
+            # Handle notifications (no response expected)
+            if method and method.startswith('notifications/'):
+                logger.debug(f"Received notification: {method}")
+                return None  # Notifications don't get responses
+
             # Route to appropriate handler
             if method == 'initialize':
                 # MCP initialize handshake
