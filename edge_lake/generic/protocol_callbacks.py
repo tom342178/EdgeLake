@@ -114,6 +114,24 @@ class ProtocolCallbacks(ABC):
         """
         pass
 
+    def validate_command(self, status, http_method: str, cmd_words: list) -> Optional[int]:
+        """
+        Validate command is appropriate for protocol/method.
+
+        Args:
+            status: ProcessStat object
+            http_method: HTTP method hint (for HTTP protocol)
+            cmd_words: Command split into words
+
+        Returns:
+            None if valid, error code if invalid
+
+        Note:
+            Default implementation does nothing (always valid).
+            HTTP protocol validates GET/POST/PUT match command type.
+        """
+        return None
+
 
 class HTTPProtocolCallbacks(ProtocolCallbacks):
     """
@@ -197,6 +215,15 @@ class HTTPProtocolCallbacks(ProtocolCallbacks):
 
     def supports_streaming(self) -> bool:
         return True
+
+    def validate_command(self, status, http_method: str, cmd_words: list) -> Optional[int]:
+        """Validate HTTP method matches command type"""
+        if cmd_words[0] != "body" and not self.http_handler.is_correct_method(status, http_method, cmd_words):
+            # Call HTTP error handler
+            from edge_lake.generic import process_status as ps
+            self.http_handler.error_wrong_method(status, http_method, " ".join(cmd_words))
+            return ps.Wrong_http_metod
+        return None
 
 
 class MCPProtocolCallbacks(ProtocolCallbacks):

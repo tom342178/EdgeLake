@@ -65,17 +65,10 @@ def protocol_exec(status, command: str, protocol_callbacks: ProtocolCallbacks,
     # 2. PARSE: Split command into words
     cmd_words = utils_data.str_to_list(command, 3)
 
-    # 3. METHOD VALIDATION: Check HTTP method matches command (for HTTP compatibility)
-    # Note: For non-HTTP protocols, this may not apply
-    if protocol_callbacks.get_protocol_name() == "HTTP":
-        from edge_lake.tcpip.http_server import is_correct_method
-        if cmd_words[0] != "body" and not is_correct_method(status, http_method, cmd_words):
-            error_msg = f"Wrong HTTP method for command: {http_method}"
-            protocol_callbacks.send_error(
-                status, process_status.Wrong_http_metod, error_msg,
-                {"command": command, "http_method": http_method}
-            )
-            return process_status.Wrong_http_metod
+    # 3. METHOD VALIDATION: Check via protocol callback
+    validation_error = protocol_callbacks.validate_command(status, http_method, cmd_words)
+    if validation_error:
+        return validation_error
 
     # 4. PREPARATION: Prepare command list and determine execution mode
     commands_list = []
