@@ -14,12 +14,9 @@ This enables:
 License: Mozilla Public License 2.0
 """
 
-import logging
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Dict
 from io import BytesIO
-
-logger = logging.getLogger(__name__)
 
 
 class ProtocolCallbacks(ABC):
@@ -246,8 +243,6 @@ class MCPProtocolCallbacks(ProtocolCallbacks):
         # Queue for SSE delivery
         self.sse_connection.queue_message('error', error_response)
 
-        logger.debug(f"MCP error queued: {error_message} (code={error_code})")
-
     def send_success(self, status, result_data: Any,
                      content_type: Optional[str] = None,
                      metadata: Optional[Dict[str, Any]] = None) -> None:
@@ -278,8 +273,6 @@ class MCPProtocolCallbacks(ProtocolCallbacks):
 
         # Queue for SSE delivery
         self.sse_connection.queue_message('message', success_response)
-
-        logger.debug(f"MCP success queued: {len(text_content)} bytes")
 
     def get_output_socket(self, status):
         """Return BytesIO buffer for capturing output"""
