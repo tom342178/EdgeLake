@@ -1124,6 +1124,33 @@ class ChunkedHTTPRequestHandler(BaseHTTPRequestHandler):
     # AnyLog Get or Post
     # =======================================================================================================================
     def al_exec(self, status, http_method, command):
+        """
+        Execute EdgeLake command via HTTP REST.
+
+        This is now a thin wrapper that delegates to protocol_exec for shared logic.
+        """
+        from edge_lake.cmd.protocol_exec import protocol_exec
+        from edge_lake.generic.protocol_callbacks import HTTPProtocolCallbacks
+
+        # Extract headers for protocol_exec
+        headers = {
+            'destination': get_value_from_headers(self.al_headers, "destination"),
+            'subset': get_value_from_headers(self.al_headers, "subset"),
+            'timeout': get_value_from_headers(self.al_headers, "timeout")
+        }
+
+        into_output = get_value_from_headers(self.al_headers, "into")
+
+        # Create HTTP callbacks
+        callbacks = HTTPProtocolCallbacks(self, http_method)
+
+        # Delegate to protocol_exec
+        ret_val = protocol_exec(status, command, callbacks, http_method, into_output, headers)
+
+        return ret_val
+
+    def al_exec_old(self, status, http_method, command):
+        """OLD VERSION - kept temporarily for reference"""
 
         ret_val = process_status.SUCCESS
 
